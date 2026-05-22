@@ -1,0 +1,414 @@
+{
+  "project_name": "DroneSim",
+  "summary": "A GUI application for creating waypoint-driven drone and small-aircraft scenarios, running simulations, replaying trajectories over terrain, analyzing run outputs, and tuning vehicle/controller parameters.",
+  "recommended_stack": {
+    "initial_gui": "Panel web app with Plotly, Bokeh, Tabulator, and background worker queues",
+    "initial_simulation_backend": "Existing in-house 6DOF quadcopter MPC package under simulations/6DOF_Quadcopter_MPC-main/drone_mc",
+    "map_and_terrain": "Extract reusable ESRI World Imagery and AWS Terrarium elevation tile logic from terrain_3d.py",
+    "future_geospatial_visualization": "Cesium or MapLibre via Python widget integration once scenario and terrain contracts are stable",
+    "future_quad_fidelity": "In-house rotor/actuator/wind extensions first, optional PyBullet/PyFlyt backend second",
+    "future_fixed_wing": "JSBSim Python backend using a Cessna 172-class aircraft model"
+  },
+  "architecture": {
+    "style": "Modular services with typed data contracts and pluggable simulation backends",
+    "components": [
+      "Panel GUI App",
+      "Application State",
+      "Scenario Manager",
+      "Map Terrain Service",
+      "Waypoint Marker Service",
+      "Simulation Manager",
+      "Drone Factory",
+      "Run Store",
+      "Replay and Analysis Views"
+    ],
+    "flow": [
+      "GUI edits map, waypoints, markers, vehicle parameters, and run settings.",
+      "Scenario Manager validates and persists scenario inputs.",
+      "Simulation Manager resolves the requested backend through DroneFactory.",
+      "Backend returns a normalized RunResult independent of simulator internals.",
+      "Run Store persists metadata and time-series outputs.",
+      "Replay and Analysis Views load saved runs without rerunning the simulator."
+    ]
+  },
+  "references": {
+    "local": [
+      {
+        "path": "idea.txt",
+        "purpose": "Original product concept, factories, map model, GUI create/render modes, waypoint and marker requirements."
+      },
+      {
+        "path": "terrain_3d.py",
+        "purpose": "Reusable tile math, ESRI imagery fetch, AWS Terrarium elevation decode, local meter conversion, Plotly terrain rendering."
+      },
+      {
+        "path": "simulations/6DOF_Quadcopter_MPC-main/drone_mc/simulator.py",
+        "purpose": "Pure run_simulation(cfg) -> SimResult entry point for the initial quadcopter backend."
+      },
+      {
+        "path": "simulations/6DOF_Quadcopter_MPC-main/drone_mc/config.py",
+        "purpose": "Current SimConfig and MCConfig dataclasses with MPC, vehicle, and Monte Carlo knobs."
+      },
+      {
+        "path": "simulations/6DOF_Quadcopter_MPC-main/drone_mc/app/main.py",
+        "purpose": "Existing Panel app pattern for background execution, progress events, and live plot refresh."
+      },
+      {
+        "path": "simulations/6DOF_Quadcopter_MPC-main/drone_mc/app/sidebar.py",
+        "purpose": "Existing waypoint source modes, editable table, Bokeh point drawing, and sidebar parameter layout."
+      },
+      {
+        "path": "simulations/6DOF_Quadcopter_MPC-main/drone_mc/monte_carlo.py",
+        "purpose": "ProcessPoolExecutor runner with callbacks, progress updates, result streaming, and cancellation."
+      },
+      {
+        "path": "simulations/DroneControl",
+        "purpose": "MATLAB/Simulink reference for future path-following/control conversion."
+      },
+      {
+        "path": "simulations/DroneControl_Path",
+        "purpose": "MATLAB/Simulink reference for future direct path trajectory generation and animation behavior."
+      }
+    ],
+    "external": [
+      {
+        "name": "JSBSim Python documentation",
+        "url": "https://jsbsim-team.github.io/jsbsim/python/index.html",
+        "purpose": "Open-source 6DOF flight dynamics model with Python bindings for fixed-wing aircraft."
+      },
+      {
+        "name": "JSBSim GitHub",
+        "url": "https://github.com/JSBSim-Team/jsbsim",
+        "purpose": "Source, aircraft data, scripts, Cessna examples, and property-tree based integration model."
+      },
+      {
+        "name": "gym-pybullet-drones",
+        "url": "https://github.com/bmabsout/gym-pybullet-drones",
+        "purpose": "PyBullet-based quadrotor simulator with steppable physics, multi-agent support, and aerodynamic effects."
+      },
+      {
+        "name": "PyFlyt",
+        "url": "https://arxiv.org/abs/2304.01305",
+        "purpose": "Bullet/Gymnasium UAV simulation platform with modular quadrotor and fixed-wing concepts."
+      },
+      {
+        "name": "Panel Plotly pane",
+        "url": "https://panel.holoviz.org/reference/panes/Plotly.html",
+        "purpose": "Plotly click, hover, selection, viewport, and efficient update support in Panel apps."
+      },
+      {
+        "name": "mapwidget",
+        "url": "https://github.com/opengeos/mapwidget",
+        "purpose": "Future Cesium, MapLibre, Leaflet, OpenLayers, and DeckGL map widgets for Python dashboards."
+      },
+      {
+        "name": "Cesium drones use case",
+        "url": "https://cesium.com/use-cases/drones/",
+        "purpose": "Reference for 3D geospatial drone flight visualization, flight logs, terrain, and digital-twin workflows."
+      }
+    ]
+  },
+  "data_contracts": {
+    "MapSpec": "Map center, radius, resolution, tile sources, cache key, and vertical exaggeration.",
+    "WaypointSet": "WGS84 lat/lon/alt waypoints plus local x/y/z coordinates, timing/speed metadata, and smoothing settings.",
+    "MarkerSet": "Map annotations with geographic/local coordinates, labels, style, visibility, and optional analysis roles.",
+    "DroneModelSpec": "Vehicle identity, type, mass/inertia/aero/rotor parameters, controller settings, and constraints.",
+    "ScenarioSpec": "Versioned composition of map, vehicle, waypoints, markers, environment, and default run configuration.",
+    "RunConfig": "Backend selection, time-step/horizon/worker settings, Monte Carlo perturbations, and deterministic seed.",
+    "RunResult": "Normalized time-series state/control/reference/error outputs, summary stats, metadata, units, and backend info."
+  },
+  "phases": [
+    {
+      "id": 0,
+      "name": "Repository and artifact baseline",
+      "objectives": [
+        "Create a project-level package layout around existing prototypes without breaking them.",
+        "Define artifact directories for maps, scenarios, runs, exports, and docs.",
+        "Produce docs/drone_sim_implementation_plan.json."
+      ],
+      "implementation_notes": [
+        "Keep simulations/6DOF_Quadcopter_MPC-main intact as a reference/vendor source until the adapter is stable.",
+        "Use dataclass contracts first to avoid adding dependencies before the package shape settles."
+      ],
+      "deliverables": [
+        "docs/drone_sim_implementation_plan.json",
+        "dronesim package skeleton",
+        "artifact directories"
+      ],
+      "risks": [
+        "Prematurely moving reference code could break the existing GUI."
+      ],
+      "success_criteria": [
+        "JSON artifact exists and top-level package can be imported."
+      ]
+    },
+    {
+      "id": 1,
+      "name": "Application skeleton and state model",
+      "objectives": [
+        "Implement typed specs for maps, waypoints, markers, vehicle models, run configs, run results, and scenarios.",
+        "Implement app state transitions for creating scenarios, editing waypoints/markers, running simulations, replaying runs, and comparing runs."
+      ],
+      "implementation_notes": [
+        "Move state into service classes rather than coupling business logic to Panel callbacks.",
+        "Use local meters internally while preserving WGS84 coordinates in scenario files."
+      ],
+      "deliverables": [
+        "dronesim/models.py",
+        "serializable scenario and run dataclasses",
+        "initial scenario manager"
+      ],
+      "risks": [
+        "Coordinate frame ambiguity between lat/lon/alt, local x/y/z, and simulator axes."
+      ],
+      "success_criteria": [
+        "Scenarios can be created, validated, saved, and loaded from JSON."
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Map and terrain service",
+      "objectives": [
+        "Extract tile math, bounding boxes, zoom selection, tile downloading, terrain decoding, crop/resample, and coordinate conversion from terrain_3d.py.",
+        "Add tile and processed terrain caching.",
+        "Support map loading/fetching by lat, lon, radius, and resolution."
+      ],
+      "implementation_notes": [
+        "Start with Plotly/Bokeh-compatible arrays and figures because they match the current dependency set.",
+        "Add Cesium/MapLibre only after terrain and scenario persistence are stable."
+      ],
+      "deliverables": [
+        "dronesim/services/terrain.py",
+        "TerrainService.fetch_map(...)",
+        "local/geographic coordinate conversion helpers"
+      ],
+      "risks": [
+        "Tile providers may rate-limit or change access patterns.",
+        "Large terrain resolutions can create heavy HTML and memory usage."
+      ],
+      "success_criteria": [
+        "A MapAsset can be created from a MapSpec and used for coordinate conversion."
+      ]
+    },
+    {
+      "id": 3,
+      "name": "ScenarioFactory and creation GUI",
+      "objectives": [
+        "Implement ScenarioManager/ScenarioFactory operations for create, validate, save, load, duplicate, and export.",
+        "Expose map picker/fetcher, waypoint editing, marker editing, metadata, validation, and save/load controls in the GUI.",
+        "Extend waypoints from x/y to lat/lon/alt with conversion to local x/y/z before simulation."
+      ],
+      "implementation_notes": [
+        "Treat scenarios as reusable inputs and runs as output artifacts attached to scenarios.",
+        "Keep sidebar modes for trajectory and marker editing as specified in idea.txt."
+      ],
+      "deliverables": [
+        "dronesim/services/scenario.py",
+        "dronesim/gui/app.py create workflow",
+        "scenario JSON save/load"
+      ],
+      "risks": [
+        "A large callback graph can become hard to reason about if GUI and services are not separated."
+      ],
+      "success_criteria": [
+        "The GUI can build a scenario from map and waypoint inputs and persist it."
+      ]
+    },
+    {
+      "id": 4,
+      "name": "DroneFactory and first simulation adapter",
+      "objectives": [
+        "Define SimulationBackend.run(scenario, run_config) -> RunResult.",
+        "Wrap drone_mc.run_simulation as InHouseMpcQuadBackend.",
+        "Normalize outputs to a common schema.",
+        "Preserve Monte Carlo style background execution through a generic run manager."
+      ],
+      "implementation_notes": [
+        "Adapterize the existing quad dynamics before rewriting fidelity.",
+        "Export units metadata with each RunResult."
+      ],
+      "deliverables": [
+        "dronesim/sim/backends.py",
+        "DroneFactory",
+        "InHouseMpcQuadBackend"
+      ],
+      "risks": [
+        "The initial quad sim is altitude-simplified and accepts 2D waypoints, so 3D path behavior needs staged upgrades."
+      ],
+      "success_criteria": [
+        "A ScenarioSpec can run through the in-house backend and return a normalized RunResult."
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Replay, analysis, and run storage",
+      "objectives": [
+        "Save each run as metadata JSON plus trajectory CSV.",
+        "Implement replay controls for play/pause, scrubbing, speed, reference vs actual, markers, and terrain clearance.",
+        "Add analysis views for tracking error, kinematics, attitude, control effort, miss distance, Monte Carlo envelopes, and parameter summary."
+      ],
+      "implementation_notes": [
+        "Replay must work from saved run files without rerunning simulation.",
+        "Use a run index to browse historical runs and compare them."
+      ],
+      "deliverables": [
+        "RunStore",
+        "run metadata JSON",
+        "trajectory CSV",
+        "basic replay and analysis tabs"
+      ],
+      "risks": [
+        "Time-series formats can drift if field units are not explicit."
+      ],
+      "success_criteria": [
+        "A completed run can be saved, listed, reloaded, and displayed in replay/analysis views."
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Higher-fidelity quadcopter model",
+      "objectives": [
+        "Add rotor allocation, motor lag, thrust/torque coefficients, saturation, drag, wind/gusts, battery effects, sensor noise, terrain collision, and better integration to the in-house quad model.",
+        "Evaluate optional gym-pybullet-drones or PyFlyt backend after the factory contract is stable."
+      ],
+      "implementation_notes": [
+        "Start with in-house fidelity for transparent control and deterministic outputs.",
+        "Add PyBullet/PyFlyt as optional backends, not required dependencies."
+      ],
+      "deliverables": [
+        "Extended quad parameter model",
+        "optional high-fidelity backend spike"
+      ],
+      "risks": [
+        "High-fidelity physics may require different controllers and smaller time steps."
+      ],
+      "success_criteria": [
+        "Backends remain swappable through the same RunResult contract."
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Fixed-wing / Cessna backend",
+      "objectives": [
+        "Add JSBSimCessnaBackend using JSBSim Python bindings.",
+        "Bridge waypoints to heading, altitude, speed, or direct surface commands.",
+        "Normalize JSBSim properties to RunResult."
+      ],
+      "implementation_notes": [
+        "Share scenario and result schemas but keep backend-specific controller settings.",
+        "Use JSBSim aircraft XML and property tree instead of hand-authoring Cessna aerodynamic coefficients."
+      ],
+      "deliverables": [
+        "JSBSim backend",
+        "Cessna model preset",
+        "fixed-wing waypoint following example"
+      ],
+      "risks": [
+        "JSBSim installation and model paths may be platform-sensitive on Windows."
+      ],
+      "success_criteria": [
+        "A fixed-wing scenario runs through JSBSim and appears in replay and analysis views."
+      ]
+    },
+    {
+      "id": 8,
+      "name": "UX polish and packaging",
+      "objectives": [
+        "Add project browser, recent scenarios, validation warnings, run queue, console, parameter presets, import/export, screenshots, and report export.",
+        "Package the app with a reproducible environment and simple launch command.",
+        "Add smoke tests for scenario loading, map conversion, simulation, run export/import, and replay."
+      ],
+      "implementation_notes": [
+        "Keep long-running simulation work in background workers and stream progress into the UI.",
+        "Keep UI layout organized around Create Map, Replay 3D, Analysis, Runs, and Console tabs."
+      ],
+      "deliverables": [
+        "polished Panel GUI",
+        "environment file",
+        "smoke tests"
+      ],
+      "risks": [
+        "Visualization complexity can overwhelm the main workflow if controls are not staged."
+      ],
+      "success_criteria": [
+        "A user can create a scenario, run it, save it, replay it, and inspect analysis without editing code."
+      ]
+    }
+  ],
+  "backend_recommendations": {
+    "in_house_mpc_quad": {
+      "use_for": "First integrated backend and transparent controller experimentation.",
+      "strengths": [
+        "Already in repo",
+        "Pure run_simulation entry point",
+        "Works with ProcessPoolExecutor",
+        "Easy to normalize outputs"
+      ],
+      "limitations": [
+        "Current path input is effectively 2D plus target altitude",
+        "No rotor-level actuator dynamics yet",
+        "No terrain collision or wind model yet"
+      ]
+    },
+    "pybullet_or_pyflyt_quad": {
+      "use_for": "Optional higher-fidelity collision-aware quadcopter simulation after contracts stabilize.",
+      "strengths": [
+        "Steppable physics",
+        "High-rate dynamics",
+        "Collision environments",
+        "Useful for reinforcement learning and multi-agent work"
+      ],
+      "limitations": [
+        "Additional dependency complexity",
+        "Controller bridging may require new adapters",
+        "Visualization and physics coordinates need careful alignment"
+      ]
+    },
+    "jsbsim_cessna": {
+      "use_for": "Small fixed-wing aircraft simulation using a standard open-source 6DOF FDM.",
+      "strengths": [
+        "Aircraft aerodynamics, propulsion, control surfaces, and atmosphere are built in",
+        "Python bindings expose a property tree",
+        "Cessna examples and scripts are available"
+      ],
+      "limitations": [
+        "Requires fixed-wing specific controller/autopilot logic",
+        "Aircraft model setup differs from quadcopter dynamics",
+        "Windows package/model-path setup should be validated early"
+      ]
+    }
+  },
+  "gui_recommendations": {
+    "layout": [
+      "Left sidebar for project/scenario selection, map controls, vehicle model, waypoints, markers, sim parameters, and run buttons.",
+      "Main tabs for Create Map, Replay 3D, Analysis, Runs, and Console.",
+      "Mode toggles for waypoint editing versus marker editing.",
+      "Progress indicators and cancel buttons for long-running simulation tasks."
+    ],
+    "interaction_model": [
+      "Scenario editing updates a central state object.",
+      "Run buttons serialize current scenario state before dispatching a backend job.",
+      "Replay and analysis tabs consume saved RunResult artifacts."
+    ]
+  },
+  "storage_recommendations": {
+    "scenarios": "Store versioned scenario JSON files under scenarios/.",
+    "maps": "Cache map metadata, processed terrain arrays, and source tile imagery under maps/.",
+    "runs": "Store one directory per run under runs/ with metadata JSON and trajectory CSV.",
+    "exports": "Use exports/ for reports, screenshots, static HTML, and external data handoff."
+  },
+  "key_risks": [
+    "Coordinate-frame mistakes between WGS84, local ENU, terrain elevation, and simulator axes.",
+    "GUI callbacks becoming tightly coupled to simulator-specific fields.",
+    "JSBSim and PyBullet/PyFlyt dependency installation complexity on Windows.",
+    "Map tile provider rate limits, API keys, and cache invalidation.",
+    "High-fidelity models may need controllers that differ significantly from the current MPC controller."
+  ],
+  "immediate_next_actions": [
+    "Define dataclass contracts in dronesim/models.py.",
+    "Extract terrain utilities into dronesim/services/terrain.py.",
+    "Create a scenario manager for saving/loading JSON scenarios.",
+    "Wrap the current drone_mc backend behind a common simulation interface.",
+    "Add a first Panel GUI workflow for creating, running, replaying, and analyzing scenarios."
+  ]
+}
