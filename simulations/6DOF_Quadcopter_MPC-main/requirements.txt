@@ -1,0 +1,13 @@
+numpy
+scipy
+control
+cvxpy
+osqp
+pandas
+panel
+holoviews
+hvplot
+bokeh
+plotly
+matplotlib
+param

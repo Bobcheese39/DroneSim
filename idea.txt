@@ -1,0 +1,47 @@
+GUI Application that creates waypoint paths and uses them as inputs to a drone simulation. replay sim runs, analyze sim runs, adjust parameters, etc
+
+
+# General Outline
+DroneFactory
+- handles drone simulation
+- generic handler for different models
+- ingests waypoints + drone parameters
+- outputs trajectory csv (xyz, vel, accel, etc), drone param file 
+
+ScenarioFactory
+- handles scenario creation
+- scenario refers to a drone trajectory + map location
+
+Scenario
+- trajectory, drone params, map object, overlay visual markers on map object
+
+
+Map
+- lat lon center point, radius (km), resolution
+
+
+GUI 
+Render
+- render scenarios
+- left side bar for drone parameters
+- main window for map plot with animated trajectory + plus analysis plots
+
+Create
+- create scenarios by loading a map from filename in maps dir or fetch new map with lat, lon, radius, and resolution options
+- add trajectory mode - switches click behavior. click to add waypoints for the trajectory, or load from csv, or type in sidebar. csv w/ lla coords, converted to xyz for drone factory
+- marker mode -  switches click behavior. select points on map to add markers / text annotations
+- or add markers through sidebar
+- render markers in sidebar
+
+
+
+
+terrain_3d.py:
+loads a map and renders terrain altitude with plotting libraries. many good components to use in this application, like the limited use of api keys and tile fetching.
+
+
+simulations/6DOF_Quadcopter_MPC-main:
+drone sim to use, for now. 
+
+simulations/DroneControl, DroneControl_Path:
+reference simulations to be converted to python.

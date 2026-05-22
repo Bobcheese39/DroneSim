@@ -1,0 +1,122 @@
+/* Console-styled dark theme overlay for the drone MC Panel app. */
+
+:root {
+    --console-bg: #0d1117;
+    --console-bg-alt: #161b22;
+    --console-fg: #c9d1d9;
+    --console-accent: #39ff14;
+    --console-warn: #ffb454;
+    --console-err: #ff3860;
+    --console-link: #58a6ff;
+    --console-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+html, body, .bk-root, .pn-Card {
+    background-color: var(--console-bg) !important;
+    color: var(--console-fg) !important;
+    font-family: var(--console-mono) !important;
+}
+
+#header, header.mdc-top-app-bar, .mdc-top-app-bar {
+    background-color: #010409 !important;
+    border-bottom: 1px solid var(--console-accent);
+}
+
+#header #title, header.mdc-top-app-bar h1 {
+    color: var(--console-accent) !important;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+aside, #sidebar {
+    background-color: var(--console-bg-alt) !important;
+    border-right: 1px solid #30363d !important;
+}
+
+.bk-tabs-header .bk-tab.bk-active {
+    background-color: var(--console-bg-alt) !important;
+    color: var(--console-accent) !important;
+    border-bottom: 2px solid var(--console-accent) !important;
+}
+
+.bk-input, .bk-btn, select, input, textarea {
+    font-family: var(--console-mono) !important;
+    background-color: #0d1117 !important;
+    color: var(--console-fg) !important;
+    border: 1px solid #30363d !important;
+}
+
+button.bk-btn-success, .pn-Button.bk-btn-success {
+    background: var(--console-accent) !important;
+    color: #0d1117 !important;
+    font-weight: bold;
+}
+
+button.bk-btn-primary, .pn-Button.bk-btn-primary {
+    background: var(--console-link) !important;
+    color: #0d1117 !important;
+    font-weight: bold;
+}
+
+button.bk-btn-danger, .pn-Button.bk-btn-danger {
+    background: var(--console-err) !important;
+    color: #0d1117 !important;
+    font-weight: bold;
+}
+
+button.bk-btn-warning, .pn-Button.bk-btn-warning {
+    background: var(--console-warn) !important;
+    color: #0d1117 !important;
+    font-weight: bold;
+}
+
+.bk-slider-title, .pn-widget-label {
+    color: var(--console-fg) !important;
+    font-family: var(--console-mono) !important;
+}
+
+.console-log {
+    background-color: #010409;
+    color: var(--console-accent);
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 12px;
+    height: 480px;
+    overflow-y: auto;
+    font-family: var(--console-mono);
+    font-size: 0.85em;
+    white-space: pre-wrap;
+}
+
+.console-log .ts {
+    color: #888;
+}
+
+.console-log .ok {
+    color: var(--console-accent);
+}
+
+.console-log .warn {
+    color: var(--console-warn);
+}
+
+.console-log .err {
+    color: var(--console-err);
+}
+
+.console-prompt::before {
+    content: ">_ ";
+    color: var(--console-accent);
+    font-weight: bold;
+}
+
+.tabulator {
+    background-color: #0d1117 !important;
+    color: var(--console-fg) !important;
+}
+
+.tabulator .tabulator-header {
+    background-color: #161b22 !important;
+    color: var(--console-accent) !important;
+    border-bottom: 1px solid var(--console-accent) !important;
+}
