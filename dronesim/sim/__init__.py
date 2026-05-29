@@ -7,12 +7,16 @@ from .backends import (
     SimulationBackend,
     SimulationManager,
 )
+from .backends_pybullet import PyBulletQuadBackend
+from .run_manager import RunManager
 
 __all__ = [
     "BackendUnavailable",
     "DroneFactory",
     "InHouseMpcQuadBackend",
     "PlaceholderBackend",
+    "PyBulletQuadBackend",
+    "RunManager",
     "SimulationBackend",
     "SimulationManager",
 ]

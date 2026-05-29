@@ -5,8 +5,12 @@ import shutil
 from pathlib import Path
 
 from dronesim.models import (
+    DroneModelSpec,
+    EnvironmentSpec,
     MapSpec,
     Marker,
+    MarkerSet,
+    RunConfig,
     ScenarioSpec,
     Waypoint,
     WaypointSet,
@@ -29,6 +33,54 @@ class ScenarioManager:
     def default_scenario(self, name: str = "Untitled Scenario") -> ScenarioSpec:
         return ScenarioSpec(name=name)
 
+    def create(
+        self,
+        *,
+        name: str,
+        waypoints: list[Waypoint],
+        map_spec: MapSpec | None = None,
+        markers: list[Marker] | None = None,
+        description: str = "",
+        vehicle: DroneModelSpec | None = None,
+        environment: EnvironmentSpec | None = None,
+        run_config: RunConfig | None = None,
+        metadata: dict | None = None,
+        coordinate_frame: str | None = None,
+    ) -> ScenarioSpec:
+        map_spec = map_spec or MapSpec()
+        normalized_waypoints = [
+            self.terrain_service.waypoint_to_local(wp, map_spec) if wp.has_geographic() else wp
+            for wp in waypoints
+        ]
+        normalized_markers = [
+            self.terrain_service.marker_to_local(marker, map_spec)
+            if marker.lat is not None and marker.lon is not None
+            else marker
+            for marker in (markers or [])
+        ]
+        frame = coordinate_frame or (
+            "wgs84+local_enu"
+            if any(wp.has_geographic() for wp in normalized_waypoints)
+            else "local_enu"
+        )
+        scenario = ScenarioSpec(
+            name=name,
+            description=description,
+            map=map_spec,
+            waypoints=WaypointSet(waypoints=normalized_waypoints, coordinate_frame=frame),
+            markers=MarkerSet(markers=normalized_markers),
+            vehicle=vehicle or DroneModelSpec(),
+            environment=environment or EnvironmentSpec(),
+            run_config=run_config or RunConfig(),
+            metadata=metadata or {},
+        )
+        if normalized_waypoints:
+            first = normalized_waypoints[0]
+            scenario.waypoints.default_alt_m = float(first.z_m if first.z_m is not None else first.alt_m)
+            scenario.run_config.target_altitude_m = scenario.waypoints.default_alt_m
+        scenario.validate()
+        return scenario
+
     def create_from_local_waypoints(
         self,
         *,
@@ -38,12 +90,16 @@ class ScenarioManager:
         map_spec: MapSpec | None = None,
         markers: list[Marker] | None = None,
     ) -> ScenarioSpec:
-        scenario = ScenarioSpec(
+        scenario = self.create(
             name=name,
-            map=map_spec or MapSpec(),
-            waypoints=WaypointSet.from_local_xy(points_xy, altitude_m=altitude_m),
+            map_spec=map_spec,
+            waypoints=[
+                Waypoint.local(float(x), float(y), float(altitude_m), label=f"WP{i}")
+                for i, (x, y) in enumerate(points_xy)
+            ],
+            markers=markers,
+            coordinate_frame="local_enu",
         )
-        scenario.markers.markers = markers or []
         scenario.run_config.target_altitude_m = altitude_m
         scenario.validate()
         return scenario
@@ -56,16 +112,13 @@ class ScenarioManager:
         map_spec: MapSpec,
         markers: list[Marker] | None = None,
     ) -> ScenarioSpec:
-        normalized = [self.terrain_service.waypoint_to_local(wp, map_spec) for wp in waypoints]
-        scenario = ScenarioSpec(
+        scenario = self.create(
             name=name,
-            map=map_spec,
-            waypoints=WaypointSet(waypoints=normalized, coordinate_frame="wgs84+local_enu"),
+            map_spec=map_spec,
+            waypoints=waypoints,
+            markers=markers,
+            coordinate_frame="wgs84+local_enu",
         )
-        scenario.markers.markers = markers or []
-        if normalized:
-            scenario.run_config.target_altitude_m = normalized[0].alt_m or scenario.run_config.target_altitude_m
-        scenario.validate()
         return scenario
 
     def validate(self, scenario: ScenarioSpec) -> list[str]:

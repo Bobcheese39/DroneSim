@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 import io
+import json
+import logging
 import math
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
-import plotly.graph_objects as go
 import requests
 from PIL import Image
 
-from dronesim.models import MapSpec, Marker, Waypoint, utc_now, write_json
+from dronesim.models import MapSpec, Marker, RunResult, Waypoint, utc_now, write_json
+
+logger = logging.getLogger(__name__)
 
 TILE_SIZE = 256
 EARTH_CIRCUMFERENCE_KM = 40075.016686
@@ -37,6 +41,42 @@ _session = requests.Session()
 _session.headers.update({"User-Agent": "DroneSim/0.1 terrain-service"})
 
 
+_LEGACY_KEY_RE = re.compile(
+    r"^(?P<name>.+?)_(?P<lat>m?\d+p\d+)_(?P<lon>m?\d+p\d+)"
+    r"_r(?P<radius>\d+p\d+)_n(?P<res>\d+)$"
+)
+_NEW_KEY_RE = re.compile(
+    r"^(?P<lat>m?\d+p\d+)_(?P<lon>m?\d+p\d+)_r(?P<radius>\d+p\d+)_n(?P<res>\d+)$"
+)
+
+
+class MapCacheMiss(RuntimeError):
+    """Raised when a requested map asset is not available from any cache.
+
+    Carries enough context for callers (GUI / CLI) to render an actionable
+    error message instead of silently substituting a blank placeholder.
+    """
+
+    def __init__(
+        self,
+        spec: MapSpec,
+        cache_dir: Path,
+        missing_tiles: int,
+        available_caches: list[dict],
+    ) -> None:
+        self.spec = spec
+        self.cache_dir = cache_dir
+        self.missing_tiles = missing_tiles
+        self.available_caches = available_caches
+        super().__init__(
+            f"No cached map at '{cache_dir.name}' for "
+            f"({spec.center_lat:.6f}, {spec.center_lon:.6f}) "
+            f"r={spec.radius_km}km n={spec.resolution}. "
+            f"{missing_tiles} raw tile(s) also missing. "
+            f"{len(available_caches)} other cache(s) available."
+        )
+
+
 @dataclass
 class MapAsset:
     """In-memory terrain/map object used by scenario editing and replay."""
@@ -51,6 +91,7 @@ class MapAsset:
     x_grid_m: np.ndarray
     y_grid_m: np.ndarray
     cache_dir: Path
+    origin: str = "unknown"
 
     @property
     def z_grid_m(self) -> np.ndarray:
@@ -192,10 +233,20 @@ def _save_tile_to_cache(tile: Image.Image, path: Path) -> None:
     tmp_path.replace(path)
 
 
-def _load_or_download_tile(url: str, cache_path: Path | None = None) -> Image.Image:
+def _load_or_download_tile(
+    url: str,
+    cache_path: Path | None = None,
+    *,
+    allow_network: bool = True,
+) -> Image.Image:
     if cache_path is not None and cache_path.exists():
         with Image.open(cache_path) as img:
             return img.convert("RGB")
+
+    if not allow_network:
+        raise FileNotFoundError(
+            f"Raw tile cache miss with allow_network=False: {cache_path}"
+        )
 
     tile = _download_tile(url).convert("RGB")
     if cache_path is not None:
@@ -220,8 +271,13 @@ def download_tiles(
     cache_root: str | Path | None = None,
     source_name: str | None = None,
     progress: ProgressCallback | None = None,
+    allow_network: bool = True,
 ) -> Image.Image:
-    """Download a grid of image tiles and stitch them into one PIL image."""
+    """Download a grid of image tiles and stitch them into one PIL image.
+
+    When ``allow_network`` is False, a missing raw tile cache file raises
+    :class:`FileNotFoundError` instead of issuing an HTTP request.
+    """
     cols = tx_max - tx_min + 1
     rows = ty_max - ty_min + 1
     total = cols * rows
@@ -241,6 +297,7 @@ def download_tiles(
                     _load_or_download_tile,
                     url_template.format(z=zoom, x=tx, y=ty),
                     cache_path,
+                    allow_network=allow_network,
                 )
                 tasks[fut] = (tx - tx_min, ty - ty_min)
 
@@ -266,8 +323,13 @@ def download_terrain_tiles_raw(
     cache_root: str | Path | None = None,
     source_name: str | None = None,
     progress: ProgressCallback | None = None,
+    allow_network: bool = True,
 ) -> np.ndarray:
-    """Download Terrarium tiles and return decoded elevation as meters."""
+    """Download Terrarium tiles and return decoded elevation as meters.
+
+    When ``allow_network`` is False, a missing raw tile cache file raises
+    :class:`FileNotFoundError` instead of issuing an HTTP request.
+    """
     cols = tx_max - tx_min + 1
     rows = ty_max - ty_min + 1
     total = cols * rows
@@ -287,6 +349,7 @@ def download_terrain_tiles_raw(
                     _load_or_download_tile,
                     url_template.format(z=zoom, x=tx, y=ty),
                     cache_path,
+                    allow_network=allow_network,
                 )
                 tasks[fut] = (tx - tx_min, ty - ty_min)
 
@@ -342,6 +405,44 @@ def crop_and_resample(
     return cropped.resize((resolution, resolution), Image.LANCZOS)
 
 
+def encode_cesium_heightmap(
+    elevation_m: np.ndarray,
+    *,
+    vertical_exaggeration: float = 1.0,
+    max_dim: int = 1024,
+) -> dict[str, float | int | bytes]:
+    """Encode an elevation grid for Cesium ``HeightmapTerrainProvider``.
+
+    Returns width, height, height_offset, height_scale, and a little-endian
+    uint16 row-major buffer (north row first, west column first).
+    """
+    z = np.asarray(elevation_m, dtype=np.float64) * vertical_exaggeration
+    rows, cols = z.shape
+
+    if rows > max_dim or cols > max_dim:
+        scale = max(rows, cols) / max_dim
+        out_h = max(2, int(round(rows / scale)))
+        out_w = max(2, int(round(cols / scale)))
+        pil = Image.fromarray(z.astype(np.float32), mode="F")
+        z = np.array(pil.resize((out_w, out_h), Image.BILINEAR), dtype=np.float64)
+
+    min_h = float(z.min())
+    max_h = float(z.max())
+    if max_h == min_h:
+        max_h = min_h + 1.0
+
+    height_scale = (max_h - min_h) / 65535.0
+    encoded = np.round((z - min_h) / height_scale).astype(np.uint16)
+
+    return {
+        "width": int(encoded.shape[1]),
+        "height": int(encoded.shape[0]),
+        "height_offset": min_h,
+        "height_scale": height_scale,
+        "buffer": encoded.tobytes(),
+    }
+
+
 def _write_map_manifest(
     cache_dir: Path,
     spec: MapSpec,
@@ -378,15 +479,39 @@ def _write_map_manifest(
     )
 
 
+def _count_missing_raw_tiles(
+    cache_root: Path,
+    source_name: str,
+    zoom: int,
+    tx_min: int,
+    tx_max: int,
+    ty_min: int,
+    ty_max: int,
+) -> int:
+    """Count how many raw slippy-map tiles are missing from the on-disk cache."""
+    missing = 0
+    for ty in range(ty_min, ty_max + 1):
+        for tx in range(tx_min, tx_max + 1):
+            if not _tile_cache_path(cache_root, source_name, zoom, tx, ty).exists():
+                missing += 1
+    return missing
+
+
 class TerrainService:
     """Fetch, cache, and build map/terrain assets."""
 
     def __init__(self, cache_root: str | Path = "maps/cache") -> None:
         self.cache_root = Path(cache_root)
         self.cache_root.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_cache_dirs()
 
     def build_blank_asset(self, spec: MapSpec) -> MapAsset:
-        """Return a no-network placeholder asset with zero elevation."""
+        """Return a no-network placeholder asset with zero elevation.
+
+        This is reserved for the initial application placeholder. Cache-miss
+        paths now raise :class:`MapCacheMiss` instead of silently returning
+        a blank surface.
+        """
         spec.validate()
         bounds = bounding_box(spec.center_lat, spec.center_lon, spec.radius_km)
         res = spec.resolution
@@ -408,6 +533,7 @@ class TerrainService:
             x_grid_m=x_grid,
             y_grid_m=y_grid,
             cache_dir=self.cache_root / spec.key(),
+            origin="blank-placeholder",
         )
 
     def fetch_map(
@@ -417,12 +543,23 @@ class TerrainService:
         fetch_remote: bool = True,
         progress: ProgressCallback | None = None,
     ) -> MapAsset:
-        """Load a cached map asset or fetch source tiles when requested."""
+        """Load a cached map asset, rebuild from raw tiles, or download fresh.
+
+        Resolution order:
+
+        1. Load the processed cache (``satellite.png`` + ``elevation.npy``).
+        2. If missing, try to rebuild from the raw slippy-tile cache without
+           the network. On success, the processed cache is populated.
+        3. If raw tiles are also missing and ``fetch_remote`` is True,
+           download fresh tiles and write the processed cache.
+        4. Otherwise raise :class:`MapCacheMiss` with details that callers can
+           surface to the user (looked-up key, missing tile count, list of
+           other cached configurations).
+        """
         spec.validate()
         imagery_url = _resolve_source_url(spec.imagery_source, IMAGERY_SOURCES, "imagery")
         elevation_url = _resolve_source_url(spec.elevation_source, ELEVATION_SOURCES, "elevation")
         cache_dir = self.cache_root / spec.key()
-        cache_dir.mkdir(parents=True, exist_ok=True)
         sat_path = cache_dir / "satellite.png"
         elev_path = cache_dir / "elevation.npy"
         manifest_path = cache_dir / "map_manifest.json"
@@ -444,37 +581,127 @@ class TerrainService:
         tb_se = tile_bounds(tx_max, ty_max, zoom)
         mosaic_bounds = (tb_se[0], tb_nw[1], tb_nw[2], tb_se[3])
 
+        origin = "unknown"
+        sat_cropped: Image.Image | None = None
+        elev_cropped: np.ndarray | None = None
+
         if sat_path.exists() and elev_path.exists():
+            logger.info(
+                "Map cache hit: loading processed assets from %s", cache_dir
+            )
             sat_cropped = Image.open(sat_path).convert("RGB")
             elev_cropped = np.load(elev_path)
             if not manifest_path.exists():
-                _write_map_manifest(cache_dir, spec, bounds, zoom, tile_range, mosaic_bounds)
-        elif not fetch_remote:
-            return self.build_blank_asset(spec)
+                _write_map_manifest(
+                    cache_dir, spec, bounds, zoom, tile_range, mosaic_bounds
+                )
+            origin = "processed-cache"
         else:
-            sat_mosaic = download_tiles(
-                imagery_url,
-                zoom,
-                tx_min,
-                tx_max,
-                ty_min,
-                ty_max,
-                label="satellite",
-                cache_root=self.cache_root,
-                source_name=spec.imagery_source,
-                progress=progress,
+            logger.info(
+                "Processed map cache miss at %s; attempting offline rebuild "
+                "from raw tile cache",
+                cache_dir,
             )
-            elev_mosaic = download_terrain_tiles_raw(
-                zoom,
-                tx_min,
-                tx_max,
-                ty_min,
-                ty_max,
-                url_template=elevation_url,
-                cache_root=self.cache_root,
-                source_name=spec.elevation_source,
-                progress=progress,
-            )
+            try:
+                sat_mosaic = download_tiles(
+                    imagery_url,
+                    zoom,
+                    tx_min,
+                    tx_max,
+                    ty_min,
+                    ty_max,
+                    label="satellite",
+                    cache_root=self.cache_root,
+                    source_name=spec.imagery_source,
+                    progress=progress,
+                    allow_network=False,
+                )
+                elev_mosaic = download_terrain_tiles_raw(
+                    zoom,
+                    tx_min,
+                    tx_max,
+                    ty_min,
+                    ty_max,
+                    url_template=elevation_url,
+                    cache_root=self.cache_root,
+                    source_name=spec.elevation_source,
+                    progress=progress,
+                    allow_network=False,
+                )
+            except FileNotFoundError as exc:
+                logger.info(
+                    "Offline rebuild for %s not possible: %s",
+                    cache_dir.name,
+                    exc,
+                )
+                if not fetch_remote:
+                    missing_imagery = _count_missing_raw_tiles(
+                        self.cache_root,
+                        spec.imagery_source,
+                        zoom,
+                        tx_min,
+                        tx_max,
+                        ty_min,
+                        ty_max,
+                    )
+                    missing_elev = _count_missing_raw_tiles(
+                        self.cache_root,
+                        spec.elevation_source,
+                        zoom,
+                        tx_min,
+                        tx_max,
+                        ty_min,
+                        ty_max,
+                    )
+                    missing_total = missing_imagery + missing_elev
+                    available = self._list_available_caches()
+                    logger.warning(
+                        "MapCacheMiss for '%s': %d raw tile(s) missing across "
+                        "imagery+elevation; %d alternate cache(s) available",
+                        cache_dir.name,
+                        missing_total,
+                        len(available),
+                    )
+                    raise MapCacheMiss(
+                        spec=spec,
+                        cache_dir=cache_dir,
+                        missing_tiles=missing_total,
+                        available_caches=available,
+                    ) from exc
+                logger.info(
+                    "Downloading missing tiles for %s (remote fetch enabled)",
+                    cache_dir.name,
+                )
+                sat_mosaic = download_tiles(
+                    imagery_url,
+                    zoom,
+                    tx_min,
+                    tx_max,
+                    ty_min,
+                    ty_max,
+                    label="satellite",
+                    cache_root=self.cache_root,
+                    source_name=spec.imagery_source,
+                    progress=progress,
+                )
+                elev_mosaic = download_terrain_tiles_raw(
+                    zoom,
+                    tx_min,
+                    tx_max,
+                    ty_min,
+                    ty_max,
+                    url_template=elevation_url,
+                    cache_root=self.cache_root,
+                    source_name=spec.elevation_source,
+                    progress=progress,
+                )
+                origin = "network-download"
+            else:
+                logger.info(
+                    "Offline rebuild succeeded for %s; writing processed cache",
+                    cache_dir.name,
+                )
+                origin = "raw-tile-rebuild"
 
             sat_cropped = crop_and_resample(
                 sat_mosaic,
@@ -490,9 +717,12 @@ class TerrainService:
                 spec.resolution,
                 is_elevation=True,
             )
+            cache_dir.mkdir(parents=True, exist_ok=True)
             sat_cropped.save(sat_path)
             np.save(elev_path, elev_cropped)
-            _write_map_manifest(cache_dir, spec, bounds, zoom, tile_range, mosaic_bounds)
+            _write_map_manifest(
+                cache_dir, spec, bounds, zoom, tile_range, mosaic_bounds
+            )
 
         res = spec.resolution
         lat_min, lon_min, lat_max, lon_max = bounds
@@ -512,6 +742,111 @@ class TerrainService:
             x_grid_m=x_grid,
             y_grid_m=y_grid,
             cache_dir=cache_dir,
+            origin=origin,
+        )
+
+    def _list_available_caches(self) -> list[dict]:
+        """Summarize the cache root so callers can guide the user."""
+        records: list[dict] = []
+        if not self.cache_root.exists():
+            return records
+        for entry in sorted(self.cache_root.iterdir()):
+            if not entry.is_dir() or entry.name == "tiles":
+                continue
+            sat_present = (entry / "satellite.png").exists()
+            elev_present = (entry / "elevation.npy").exists()
+            if not (sat_present and elev_present):
+                continue
+            record: dict = {
+                "key": entry.name,
+                "center_lat": None,
+                "center_lon": None,
+                "radius_km": None,
+                "resolution": None,
+            }
+            manifest_path = entry / "map_manifest.json"
+            if manifest_path.exists():
+                try:
+                    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    spec_dict = data.get("spec") or {}
+                    record["center_lat"] = spec_dict.get("center_lat")
+                    record["center_lon"] = spec_dict.get("center_lon")
+                    record["radius_km"] = spec_dict.get("radius_km")
+                    record["resolution"] = spec_dict.get("resolution")
+                except (json.JSONDecodeError, OSError) as exc:
+                    logger.warning(
+                        "Could not parse manifest %s: %s", manifest_path, exc
+                    )
+            records.append(record)
+        return records
+
+    def _migrate_legacy_cache_dirs(self) -> None:
+        """Rename legacy ``<name>_<lat>_<lon>_r..._n...`` cache dirs to the new
+        spatial-only key. Runs once per :class:`TerrainService` instance.
+        """
+        if not self.cache_root.exists():
+            return
+        for entry in sorted(self.cache_root.iterdir()):
+            if not entry.is_dir() or entry.name == "tiles":
+                continue
+            new_name = self._compute_new_key_for_dir(entry)
+            if new_name is None or new_name == entry.name:
+                continue
+            target = self.cache_root / new_name
+            if target.exists():
+                logger.warning(
+                    "Skipping migration of '%s' -> '%s' (target already exists)",
+                    entry.name,
+                    new_name,
+                )
+                continue
+            try:
+                entry.rename(target)
+            except OSError as exc:
+                logger.warning(
+                    "Could not migrate cache dir '%s' -> '%s': %s",
+                    entry.name,
+                    new_name,
+                    exc,
+                )
+                continue
+            logger.info(
+                "Migrated cache directory '%s' -> '%s'", entry.name, new_name
+            )
+
+    @staticmethod
+    def _compute_new_key_for_dir(entry: Path) -> str | None:
+        """Return the new-format cache key for an existing cache directory.
+
+        Returns ``None`` if the directory name does not look like any known
+        cache key format.
+        """
+        if _NEW_KEY_RE.match(entry.name):
+            return entry.name
+        manifest_path = entry / "map_manifest.json"
+        if manifest_path.exists():
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                spec_dict = data.get("spec") or {}
+                spec_for_key = MapSpec(
+                    center_lat=float(spec_dict["center_lat"]),
+                    center_lon=float(spec_dict["center_lon"]),
+                    radius_km=float(spec_dict["radius_km"]),
+                    resolution=int(spec_dict["resolution"]),
+                    name=spec_dict.get("name", "default_map"),
+                )
+                return spec_for_key.key()
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError, OSError) as exc:
+                logger.warning(
+                    "Cannot derive new cache key from manifest %s: %s",
+                    manifest_path,
+                    exc,
+                )
+        match = _LEGACY_KEY_RE.match(entry.name)
+        if not match:
+            return None
+        return (
+            f"{match['lat']}_{match['lon']}_r{match['radius']}_n{match['res']}"
         )
 
     def waypoint_to_local(self, waypoint: Waypoint, spec: MapSpec) -> Waypoint:
@@ -538,15 +873,99 @@ class TerrainService:
         waypoint.alt_m = float(waypoint.z_m if waypoint.z_m is not None else waypoint.alt_m)
         return waypoint
 
+    def marker_to_local(self, marker: Marker, spec: MapSpec) -> Marker:
+        if marker.x_m is not None and marker.y_m is not None:
+            return marker
+        if marker.lat is None or marker.lon is None:
+            raise ValueError("Marker needs lat/lon or local x/y")
+        x, y = to_local_meters(
+            np.array([marker.lat]), np.array([marker.lon]), spec.center_lat, spec.center_lon
+        )
+        marker.x_m = float(x[0])
+        marker.y_m = float(y[0])
+        marker.z_m = marker.alt_m if marker.z_m is None else marker.z_m
+        return marker
+
+    def local_to_marker(self, marker: Marker, spec: MapSpec) -> Marker:
+        if marker.lat is not None and marker.lon is not None:
+            return marker
+        if marker.x_m is None or marker.y_m is None:
+            raise ValueError("Marker needs local x/y or lat/lon")
+        lat, lon = local_to_lat_lon(marker.x_m, marker.y_m, spec.center_lat, spec.center_lon)
+        marker.lat = float(lat)
+        marker.lon = float(lon)
+        marker.alt_m = float(marker.z_m if marker.z_m is not None else marker.alt_m)
+        return marker
+
+
+CLEARANCE_WARN_M = 1.0
+
+
+def compute_run_clearance_m(run: RunResult, asset: MapAsset) -> list[float]:
+    """Return altitude above terrain (m) at each trajectory sample."""
+    clearance: list[float] = []
+    for pos in run.position_m:
+        if len(pos) < 3 or pos[0] is None or pos[1] is None or pos[2] is None:
+            clearance.append(float("nan"))
+            continue
+        try:
+            terrain_z = asset.elevation_at(float(pos[0]), float(pos[1]))
+            clearance.append(float(pos[2]) - terrain_z)
+        except (ValueError, IndexError):
+            clearance.append(float("nan"))
+    return clearance
+
+
+def waypoints_from_run_metadata(run: RunResult, default_alt_m: float = 5.0) -> list[Waypoint]:
+    """Rebuild waypoint list from frozen run metadata."""
+    raw = run.metadata.get("waypoints_local_xy")
+    if not raw:
+        return []
+    waypoints: list[Waypoint] = []
+    for i, pt in enumerate(raw):
+        if len(pt) < 2:
+            continue
+        z = float(pt[2]) if len(pt) > 2 else default_alt_m
+        waypoints.append(Waypoint.local(float(pt[0]), float(pt[1]), z, label=f"WP{i}"))
+    return waypoints
+
+
+def reference_xyz_from_run(run: RunResult, default_alt_m: float = 5.0) -> np.ndarray | None:
+    """Return reference path as Nx3 array from run series or metadata."""
+    if run.reference_position_m:
+        arr = np.asarray(run.reference_position_m, dtype=float)
+        if len(arr):
+            return arr
+    spline = run.metadata.get("spline_points")
+    if spline:
+        arr = np.asarray(spline, dtype=float)
+        if len(arr) and arr.shape[1] >= 2:
+            z = default_alt_m
+            cfg = run.metadata.get("cfg_summary") or {}
+            if "target_altitude_m" in cfg:
+                z = float(cfg["target_altitude_m"])
+            return np.column_stack([arr[:, 0], arr[:, 1], np.full(len(arr), z)])
+    return None
+
 
 def build_terrain_figure(
     asset: MapAsset,
     *,
     trajectory_xyz: np.ndarray | None = None,
+    reference_xyz: np.ndarray | None = None,
+    time_index: int | None = None,
+    clearance_m: list[float] | None = None,
     waypoints: list[Waypoint] | None = None,
     markers: list[Marker] | None = None,
-) -> go.Figure:
-    """Build a Plotly 3D terrain/replay figure from a MapAsset."""
+    show_clearance_warning: bool = False,
+) -> "go.Figure":
+    """Build a Plotly 3D terrain/replay figure from a MapAsset.
+
+    ``plotly`` is imported lazily so the core install does not require it; the
+    web frontend renders charts client-side and never calls this helper.
+    """
+    import plotly.graph_objects as go
+
     sat_rgb = asset.satellite.convert("RGB")
     sat_quantized = sat_rgb.quantize(colors=256, method=Image.Quantize.MEDIANCUT)
     palette = sat_quantized.getpalette()[: 256 * 3]
@@ -562,8 +981,8 @@ def build_terrain_figure(
     fig = go.Figure(
         data=[
             go.Surface(
-                x=asset.x_grid_m / 1000.0,
-                y=asset.y_grid_m / 1000.0,
+                x=asset.x_grid_m,
+                y=asset.y_grid_m,
                 z=asset.z_grid_m,
                 surfacecolor=indices,
                 colorscale=colorscale,
@@ -577,25 +996,60 @@ def build_terrain_figure(
         ]
     )
 
-    if trajectory_xyz is not None and len(trajectory_xyz):
+    if reference_xyz is not None and len(reference_xyz):
         fig.add_trace(
             go.Scatter3d(
-                x=trajectory_xyz[:, 0] / 1000.0,
-                y=trajectory_xyz[:, 1] / 1000.0,
-                z=trajectory_xyz[:, 2],
+                x=reference_xyz[:, 0],
+                y=reference_xyz[:, 1],
+                z=reference_xyz[:, 2],
                 mode="lines",
-                line=dict(color="#39ff14", width=5),
-                name="Trajectory",
+                line=dict(color="#ff7b00", width=4),
+                name="Reference",
             )
         )
+
+    if trajectory_xyz is not None and len(trajectory_xyz):
+        end_idx = len(trajectory_xyz)
+        if time_index is not None:
+            end_idx = min(max(int(time_index) + 1, 1), len(trajectory_xyz))
+        segment = trajectory_xyz[:end_idx]
+
+        line_color = "#39ff14"
+        if show_clearance_warning and clearance_m is not None and len(clearance_m) >= end_idx:
+            if any(c < CLEARANCE_WARN_M for c in clearance_m[:end_idx] if c == c):
+                line_color = "#ff3860"
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=segment[:, 0],
+                y=segment[:, 1],
+                z=segment[:, 2],
+                mode="lines",
+                line=dict(color=line_color, width=5),
+                name="Actual",
+            )
+        )
+
+        if time_index is not None and 0 <= time_index < len(trajectory_xyz):
+            pt = trajectory_xyz[time_index]
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[pt[0]],
+                    y=[pt[1]],
+                    z=[pt[2]],
+                    mode="markers",
+                    marker=dict(size=8, color="#58a6ff", symbol="circle"),
+                    name="Drone",
+                )
+            )
 
     if waypoints:
         local_points = np.array([wp.local_xyz() for wp in waypoints if wp.has_local_xy()])
         if len(local_points):
             fig.add_trace(
                 go.Scatter3d(
-                    x=local_points[:, 0] / 1000.0,
-                    y=local_points[:, 1] / 1000.0,
+                    x=local_points[:, 0],
+                    y=local_points[:, 1],
                     z=local_points[:, 2],
                     mode="markers+text",
                     marker=dict(size=6, color="#58a6ff", symbol="diamond"),
@@ -612,8 +1066,8 @@ def build_terrain_figure(
             z = marker.z_m if marker.z_m is not None else marker.alt_m
             fig.add_trace(
                 go.Scatter3d(
-                    x=[marker.x_m / 1000.0],
-                    y=[marker.y_m / 1000.0],
+                    x=[marker.x_m],
+                    y=[marker.y_m],
                     z=[z],
                     mode="markers+text",
                     marker=dict(size=marker.size, color=marker.color),
@@ -626,8 +1080,8 @@ def build_terrain_figure(
     fig.update_layout(
         template="plotly_dark",
         scene=dict(
-            xaxis=dict(title="East (km)", showbackground=False),
-            yaxis=dict(title="North (km)", showbackground=False),
+            xaxis=dict(title="East (m)", showbackground=False),
+            yaxis=dict(title="North (m)", showbackground=False),
             zaxis=dict(title="Elevation / Altitude (m)", showbackground=False),
             aspectmode="data",
         ),

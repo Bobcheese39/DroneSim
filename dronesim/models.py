@@ -69,7 +69,7 @@ class MapSpec:
         if self.cache_key:
             return self.cache_key
         return (
-            f"{self.name}_{self.center_lat:.6f}_{self.center_lon:.6f}_"
+            f"{self.center_lat:.6f}_{self.center_lon:.6f}_"
             f"r{self.radius_km:.3f}_n{self.resolution}"
         ).replace("-", "m").replace(".", "p")
 
@@ -179,6 +179,14 @@ class DroneModelSpec:
         "Ix": 1.0,
         "Iy": 1.0,
         "Iz": 1.5,
+        # Phase 6 aero block. Zero coefficients => no drag => legacy behavior.
+        # TODO Phase 6 follow-up: rotor allocation, motor lag, thrust/torque
+        # coefficients, actuator saturation, battery sag, sensor noise live here.
+        "aero": {
+            "cd_linear": 0.0,
+            "cd_quadratic": 0.0,
+            "reference_area_m2": 0.1,
+        },
     })
     controller: dict[str, Any] = field(default_factory=lambda: {
         "type": "mpc",
@@ -194,6 +202,13 @@ class EnvironmentSpec:
     wind_mps: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     turbulence: dict[str, Any] = field(default_factory=dict)
     terrain_collision_enabled: bool = False
+    # Phase 6: gust + atmosphere. Zero std == no gusts (legacy-equivalent).
+    gust_std_mps: float = 0.0
+    gust_decorrelation_s: float = 2.0
+    air_density_kg_m3: float = 1.225
+    # Distance kept above terrain before a collision is declared. Tunable so
+    # high-resolution terrain doesn't trigger spurious collisions on hover.
+    terrain_collision_offset_m: float = 0.5
 
 
 @dataclass
@@ -207,6 +222,13 @@ class RunConfig:
     lookahead: int = 60
     waypoint_threshold_m: float = 0.25
     seed: int | None = None
+    # Phase 6 fidelity selectors.
+    # ``integration_method``: "euler" (legacy) or "rk4".
+    # ``fidelity_mode``: "auto" (pick extended path when any fidelity knob is
+    # non-zero), "legacy" (force vendor path), or "extended" (force local
+    # runtime even when knobs are zero, useful for parity tests).
+    integration_method: str = "euler"
+    fidelity_mode: str = "auto"
     monte_carlo: dict[str, Any] = field(default_factory=lambda: {
         "enabled": false_bool(),
         "n_trials": 1,
@@ -367,12 +389,17 @@ class RunResult:
             vel = self.velocity_mps[i] if i < len(self.velocity_mps) else [None, None, None]
             acc = self.acceleration_mps2[i] if i < len(self.acceleration_mps2) else [None, None, None]
             att = self.attitude_rad[i] if i < len(self.attitude_rad) else [None, None, None]
+            ref = self.reference_position_m[i] if i < len(self.reference_position_m) else [None, None, None]
+            ctrl = self.controls[i] if i < len(self.controls) else [None, None, None, None]
             err = self.tracking_error_m[i] if i < len(self.tracking_error_m) else None
             rows.append({
                 "time_s": t,
                 "x_m": pos[0],
                 "y_m": pos[1],
                 "z_m": pos[2],
+                "ref_x_m": ref[0],
+                "ref_y_m": ref[1],
+                "ref_z_m": ref[2],
                 "vx_mps": vel[0],
                 "vy_mps": vel[1],
                 "vz_mps": vel[2],
@@ -382,6 +409,10 @@ class RunResult:
                 "roll_rad": att[0],
                 "pitch_rad": att[1],
                 "yaw_rad": att[2],
+                "ft_N": ctrl[0] if len(ctrl) > 0 else None,
+                "tx_Nm": ctrl[1] if len(ctrl) > 1 else None,
+                "ty_Nm": ctrl[2] if len(ctrl) > 2 else None,
+                "tz_Nm": ctrl[3] if len(ctrl) > 3 else None,
                 "tracking_error_m": err,
             })
         return rows

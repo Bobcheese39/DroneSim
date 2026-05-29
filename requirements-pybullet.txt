@@ -1,0 +1,22 @@
+# Optional PyFlyt / PyBullet backend for dronesim.
+#
+# Install order matters: wheel and numpy must be present before PyFlyt so
+# pybullet is built with numpy support.
+#
+# Windows: if pip cannot find a prebuilt pybullet wheel for your Python
+# version, install Microsoft Visual Studio Build Tools with "Desktop
+# development with C++" selected, then retry.
+#
+# If install fails on Python 3.13, use a Python 3.11 or 3.12 venv instead.
+#
+#   pip install wheel numpy
+#   pip install -r requirements-pybullet.txt
+#
+# PyFlyt may downgrade numpy below 2.0 during install. DroneSim's in-house
+# MPC backend (cvxpy) needs numpy>=2. After PyFlyt installs, restore it:
+#
+#   pip install "numpy>=2.0.0"
+
+wheel
+numpy
+PyFlyt>=0.24

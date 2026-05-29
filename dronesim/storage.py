@@ -45,3 +45,34 @@ class RunStore:
         if not root.exists():
             return []
         return sorted(root.glob("**/run_result.json"))
+
+    def list_run_summaries(self, scenario_id: str | None = None) -> list[dict[str, object]]:
+        """Return lightweight run metadata without loading full time series."""
+        summaries: list[dict[str, object]] = []
+        for path in self.list_runs(scenario_id):
+            try:
+                payload = read_json(path)
+            except Exception:
+                continue
+            summary = payload.get("summary", {})
+            summaries.append({
+                "run_id": payload.get("run_id", path.parent.name),
+                "scenario_id": payload.get("scenario_id", ""),
+                "backend": payload.get("backend_id", ""),
+                "status": payload.get("status", "unknown"),
+                "success": summary.get("success", False),
+                "miss_m": summary.get("miss_distance_m"),
+                "created_utc": payload.get("created_utc", ""),
+                "path": str(path.parent),
+            })
+        return summaries
+
+    def load_scenario_runs(self, scenario_id: str) -> list[RunResult]:
+        """Load all runs for a scenario, newest first."""
+        runs: list[RunResult] = []
+        for path in reversed(self.list_runs(scenario_id)):
+            try:
+                runs.append(self.load(path))
+            except Exception:
+                continue
+        return runs

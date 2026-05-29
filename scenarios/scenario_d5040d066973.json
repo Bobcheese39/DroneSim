@@ -1,0 +1,320 @@
+{
+  "scenario_id": "scenario_d5040d066973",
+  "schema_version": "0.1.0",
+  "name": "beach 2",
+  "description": "beach",
+  "map": {
+    "center_lat": 38.9733,
+    "center_lon": -74.9234,
+    "radius_km": 50.0,
+    "resolution": 400,
+    "name": "beach 2",
+    "imagery_source": "esri_world_imagery",
+    "elevation_source": "aws_terrarium",
+    "cache_key": null,
+    "vertical_exaggeration": 1.0
+  },
+  "waypoints": {
+    "waypoints": [
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": -1.177,
+        "x_m": -3648.537,
+        "y_m": 719.199,
+        "z_m": -1.177,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP1"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": -1.177,
+        "x_m": -3652.537,
+        "y_m": 719.199,
+        "z_m": -1.177,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP2"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": -1.177,
+        "x_m": -3658.537,
+        "y_m": 719.199,
+        "z_m": -1.177,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP3"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 5.276,
+        "x_m": -2595.372,
+        "y_m": 781.739,
+        "z_m": 5.276,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP4"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 4.707,
+        "x_m": -531.582,
+        "y_m": 2282.677,
+        "z_m": 4.707,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP5"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 0.033,
+        "x_m": -1344.59,
+        "y_m": 7473.421,
+        "z_m": 0.033,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP6"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 1.011,
+        "x_m": -906.817,
+        "y_m": 7285.804,
+        "z_m": 1.011,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP7"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 0.024,
+        "x_m": -1969.981,
+        "y_m": 5972.483,
+        "z_m": 0.024,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP8"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 2.288,
+        "x_m": -2970.607,
+        "y_m": 3533.458,
+        "z_m": 2.288,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP9"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 3.42,
+        "x_m": -2595.372,
+        "y_m": 1907.442,
+        "z_m": 3.42,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP10"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": -10.874,
+        "x_m": 6641.604,
+        "y_m": -12406.015,
+        "z_m": -10.874,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP11"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": 0.167,
+        "x_m": 3383.459,
+        "y_m": -2882.206,
+        "z_m": 0.167,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP12"
+      },
+      {
+        "lat": null,
+        "lon": null,
+        "alt_m": -14.542,
+        "x_m": 16165.414,
+        "y_m": 2631.579,
+        "z_m": -14.542,
+        "time_s": null,
+        "speed_mps": null,
+        "label": "WP12"
+      }
+    ],
+    "coordinate_frame": "local_enu",
+    "smoothing": "spline",
+    "default_alt_m": -1.177
+  },
+  "markers": {
+    "markers": [
+      {
+        "label": "Launch",
+        "lat": null,
+        "lon": null,
+        "alt_m": 5.0,
+        "x_m": 0.0,
+        "y_m": 0.0,
+        "z_m": 5.0,
+        "color": "red",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": ""
+      },
+      {
+        "label": "Marker2",
+        "lat": 38.32076473788972,
+        "lon": -78.48851670900885,
+        "alt_m": 495.2508239746094,
+        "x_m": -569.105691056637,
+        "y_m": -556.5978736707001,
+        "z_m": 495.2508239746094,
+        "color": "yellow",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": "Added from map click"
+      },
+      {
+        "label": "Marker3",
+        "lat": 38.32076473788972,
+        "lon": -78.48851670900885,
+        "alt_m": 495.2508239746094,
+        "x_m": -569.105691056637,
+        "y_m": -556.5978736707001,
+        "z_m": 495.2508239746094,
+        "color": "red",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": "Added from map click"
+      },
+      {
+        "label": "Marker4",
+        "lat": 38.96254383722824,
+        "lon": -74.9038769624771,
+        "alt_m": 1.1754863262176514,
+        "x_m": 1689.6120150188872,
+        "y_m": -1188.986232790676,
+        "z_m": 1.1754863262176514,
+        "color": "yellow",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": "Added from map click"
+      },
+      {
+        "label": "Marker7",
+        "lat": 38.96826473788972,
+        "lon": -74.92997587165706,
+        "alt_m": 495.2508239746094,
+        "x_m": -569.105691056637,
+        "y_m": -556.5978736707001,
+        "z_m": 495.2508239746094,
+        "color": "yellow",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": "Added from map click"
+      },
+      {
+        "label": "Marker6",
+        "lat": 38.997344790976086,
+        "lon": -74.95627935828533,
+        "alt_m": 1.481019377708435,
+        "x_m": -2845.5284552843614,
+        "y_m": 2657.91119449639,
+        "z_m": 1.481019377708435,
+        "color": "yellow",
+        "size": 10.0,
+        "visible": true,
+        "role": "annotation",
+        "notes": "Added from map click"
+      }
+    ]
+  },
+  "vehicle": {
+    "model_id": "inhouse_mpc_quad",
+    "model_type": "quadcopter",
+    "backend_id": "pybullet_quad",
+    "display_name": "In-house MPC Quadcopter",
+    "parameters": {
+      "mass": 5.0,
+      "Ix": 1.0,
+      "Iy": 1.0,
+      "Iz": 1.5,
+      "aero": {
+        "cd_linear": 0.0,
+        "cd_quadratic": 0.0,
+        "reference_area_m2": 0.1
+      }
+    },
+    "controller": {
+      "type": "mpc",
+      "horizon": 20,
+      "lookahead": 60
+    },
+    "constraints": {}
+  },
+  "environment": {
+    "gravity_mps2": 9.80665,
+    "wind_mps": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "turbulence": {},
+    "terrain_collision_enabled": false,
+    "gust_std_mps": 0.0,
+    "gust_decorrelation_s": 2.0,
+    "air_density_kg_m3": 1.225,
+    "terrain_collision_offset_m": 0.5
+  },
+  "run_config": {
+    "run_id": "run_68ca9978e94c",
+    "backend_id": "pybullet_quad",
+    "dt_s": 0.1,
+    "max_steps": 2500,
+    "target_altitude_m": -1.177,
+    "horizon": 20,
+    "lookahead": 60,
+    "waypoint_threshold_m": 0.25,
+    "seed": 1,
+    "integration_method": "euler",
+    "fidelity_mode": "auto",
+    "monte_carlo": {
+      "enabled": false,
+      "n_trials": 1,
+      "workers": 1,
+      "base_seed": 0,
+      "init_pos_std": 0.0,
+      "init_vel_std": 0.0,
+      "init_att_std": 0.0,
+      "force_noise_std": 0.0,
+      "mass_jitter_pct": 0.0,
+      "inertia_jitter_pct": 0.0
+    }
+  },
+  "metadata": {},
+  "created_utc": "2026-05-24T22:24:50+00:00",
+  "updated_utc": "2026-05-25T04:21:48+00:00"
+}

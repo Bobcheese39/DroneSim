@@ -45,3 +45,15 @@ drone sim to use, for now.
 
 simulations/DroneControl, DroneControl_Path:
 reference simulations to be converted to python.
+
+Trajector Creator
+- open x/y plot - 0 deg azimuth view angle 3d plot
+- set xy scale, or default
+- click and drag to draw a line/ shape, single click to add waypoint
+- next button  called next or set z scale w/ ->
+- rotate plot 45 deg azimuth
+- set z val of entire line - can click a point on line to smoothly adjust z for that axis. for waypoints, set z val of all way points :w
+
+Run the app (FastAPI + vanilla web frontend):
+    uvicorn dronesim.web.server:app --reload
+then open http://127.0.0.1:8000

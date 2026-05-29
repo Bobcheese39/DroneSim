@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import time as _time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
+
+StepProgressCb = Callable[[int, int], None]
 
 import numpy as np
 
@@ -46,9 +48,29 @@ def _build_initial_state(cfg: SimConfig) -> np.ndarray:
     ], dtype=float)
 
 
+def _step_report_interval(total_steps: int) -> int:
+    if total_steps <= 500:
+        return 1
+    return max(1, total_steps // 200)
+
+
+def _notify_step_progress(
+    callback: StepProgressCb | None,
+    current_step: int,
+    total_steps: int,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(current_step, total_steps)
+    except Exception:
+        pass
+
+
 def run_simulation(
     cfg: SimConfig,
     tracker: Optional[Tracker] = None,
+    on_step_progress: StepProgressCb | None = None,
 ) -> SimResult:
     """Run one MPC simulation and return the time series + summary stats.
 
@@ -93,6 +115,8 @@ def run_simulation(
 
     if tracker is not None:
         tracker.reset(0.0, LeaderState(t=0.0, x=quad.x, y=quad.y, z=desired_z))
+
+    report_every = _step_report_interval(T)
 
     for i in range(T):
         # Pick the next reference: tracker takes precedence if supplied.
@@ -139,10 +163,20 @@ def run_simulation(
         u_hist[i] = (quad.m * quad.g + ft, tx, ty, tz)
         ref_xy[i] = (ref_x, ref_y)
         written = i + 1
+        current_step = i + 1
+        if (
+            on_step_progress is not None
+            and (
+                current_step % report_every == 0
+                or current_step == T
+            )
+        ):
+            _notify_step_progress(on_step_progress, current_step, T)
 
         if quad.near(final_waypt, 0.15):
             success = True
             settle_steps = i + 1
+            _notify_step_progress(on_step_progress, current_step, T)
             break
 
     pos = pos[:written]

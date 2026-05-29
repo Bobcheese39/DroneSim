@@ -1,0 +1,11 @@
+numpy
+scipy
+control
+cvxpy
+osqp
+pandas
+matplotlib
+requests
+pillow
+fastapi
+uvicorn[standard]

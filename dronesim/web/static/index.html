@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DroneSim</title>
+    <link
+      rel="stylesheet"
+      href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css"
+    />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        DroneSim
+      </div>
+      <nav class="segmented" id="view-switcher">
+        <button data-view="create" class="active">Create</button>
+        <button data-view="replay">Replay</button>
+        <button data-view="analysis">Analysis</button>
+        <button data-view="runs">Runs</button>
+      </nav>
+      <div class="status-pill" id="status-pill">
+        <span class="status-dot"></span>
+        <span id="status-text">Loading&hellip;</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="inspector" id="inspector"></aside>
+
+      <section class="stage">
+        <div class="stage-panel active" id="map-stage">
+          <div id="cesium" class="cesium-host"></div>
+          <div class="map-hud" id="map-hud"></div>
+          <div class="replay-bar" id="replay-bar" hidden></div>
+        </div>
+        <div class="stage-panel" id="analysis-stage"></div>
+        <div class="stage-panel" id="runs-stage"></div>
+      </section>
+    </main>
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script type="module" src="/js/main.js"></script>
+  </body>
+</html>

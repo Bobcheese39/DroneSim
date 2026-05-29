@@ -268,8 +268,8 @@ def build_figure(
         colorscale.append([norm, f"rgb({r},{g},{b})"])
 
     surface = go.Surface(
-        x=x_grid / 1000.0,
-        y=y_grid / 1000.0,
+        x=x_grid,
+        y=y_grid,
         z=z_grid,
         surfacecolor=indices,
         colorscale=colorscale,
@@ -279,8 +279,8 @@ def build_figure(
         lighting=dict(ambient=0.9, diffuse=0.4, specular=0.05, roughness=0.8),
         lightposition=dict(x=0, y=0, z=10000),
         hovertemplate=(
-            "East: %{x:.2f} km<br>"
-            "North: %{y:.2f} km<br>"
+            "East: %{x:.0f} m<br>"
+            "North: %{y:.0f} m<br>"
             "Elevation: %{z:.0f} m<extra></extra>"
         ),
     )
@@ -309,15 +309,15 @@ def build_figure(
             cscale = "Hot"
 
         track_trace = go.Scatter3d(
-            x=t_x / 1000.0,
-            y=t_y / 1000.0,
+            x=t_x,
+            y=t_y,
             z=t_z,
             mode="lines",
             line=dict(color=color_vals, colorscale=cscale, width=5, showscale=True,
                       colorbar=dict(title=color_label, x=1.02, len=0.5)),
             hovertemplate=(
-                "East: %{x:.2f} km<br>"
-                "North: %{y:.2f} km<br>"
+                "East: %{x:.0f} m<br>"
+                "North: %{y:.0f} m<br>"
                 "Alt: %{z:.0f} m<extra></extra>"
             ),
             name="Track",
@@ -333,8 +333,8 @@ def build_figure(
             )
             loc_z = np.array([row["alt"]]) * exaggeration
             fig.add_trace(go.Scatter3d(
-                x=loc_x / 1000.0,
-                y=loc_y / 1000.0,
+                x=loc_x,
+                y=loc_y,
                 z=loc_z,
                 mode="markers",
                 marker=dict(
@@ -347,27 +347,18 @@ def build_figure(
                 hovertemplate=(
                     f"{row['name']}<br>"
                     f"Lat: {row['lat']:.6f}, Lon: {row['lon']:.6f}<br>"
-                    "East: %{x:.2f} km<br>"
-                    "North: %{y:.2f} km<br>"
+                    "East: %{x:.0f} m<br>"
+                    "North: %{y:.0f} m<br>"
                     "Alt: %{z:.0f} m<extra></extra>"
                 ),
             ))
 
-    # --- layout ---
-    elev_range = float(z_grid.max() - z_grid.min()) or 1.0
-    x_range = float(x_grid.max() - x_grid.min()) / 1000.0 or 1.0
-    y_range = float(y_grid.max() - y_grid.min()) / 1000.0 or 1.0
-    horiz_range = max(x_range, y_range)
-    z_aspect = elev_range / (horiz_range * 1000.0) * 2.0
-    z_aspect = max(z_aspect, 0.05)
-
     fig.update_layout(
         scene=dict(
-            xaxis=dict(title="East (km)", showbackground=False),
-            yaxis=dict(title="North (km)", showbackground=False),
+            xaxis=dict(title="East (m)", showbackground=False),
+            yaxis=dict(title="North (m)", showbackground=False),
             zaxis=dict(title="Elevation (m)", showbackground=False),
-            aspectmode="manual",
-            aspectratio=dict(x=1, y=y_range / x_range if x_range else 1, z=z_aspect),
+            aspectmode="data",
             camera=dict(
                 eye=dict(x=1.5, y=-1.5, z=1.2),
                 up=dict(x=0, y=0, z=1),
