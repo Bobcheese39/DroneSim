@@ -112,6 +112,9 @@ def run_simulation(
     settle_steps = T
     written = 0
     desired_z = float(cfg.altitude)
+    z_pred_abs_err_sum = 0.0
+    z_pred_abs_err_max = 0.0
+    z_pred_samples = 0
 
     if tracker is not None:
         tracker.reset(0.0, LeaderState(t=0.0, x=quad.x, y=quad.y, z=desired_z))
@@ -145,8 +148,7 @@ def run_simulation(
         ])
 
         u_step = controller.solve(x0, xr)
-        # MPC operates on the discrete linearization for warm-start continuity.
-        x0 = controller.step_state(x0, u_step)
+        predicted_next = controller.step_state(x0, u_step)
 
         # Inject process noise on the actual control sent to the nonlinear plant.
         if cfg.force_noise_std > 0.0:
@@ -155,6 +157,12 @@ def run_simulation(
             noise = np.zeros(4)
         ft, tx, ty, tz = (u_step + noise).tolist()
         quad.apply(ft, tx, ty, tz)
+        measured_next = np.asarray(quad.state_vector, dtype=float)
+        x0 = measured_next
+        z_pred_abs_err = abs(float(measured_next[11] - predicted_next[11]))
+        z_pred_abs_err_sum += z_pred_abs_err
+        z_pred_abs_err_max = max(z_pred_abs_err_max, z_pred_abs_err)
+        z_pred_samples += 1
 
         pos[i] = (quad.x, quad.y, quad.z)
         vel[i] = (quad.x_dot, quad.y_dot, quad.z_dot)
@@ -213,5 +221,8 @@ def run_simulation(
             "force_noise_std": cfg.force_noise_std,
             "mass_jitter_pct": cfg.mass_jitter_pct,
             "inertia_jitter_pct": cfg.inertia_jitter_pct,
+            "controller_state_source": "measured_plant_state",
+            "z_pred_abs_err_mean_m": (z_pred_abs_err_sum / z_pred_samples) if z_pred_samples else 0.0,
+            "z_pred_abs_err_max_m": z_pred_abs_err_max,
         },
     )

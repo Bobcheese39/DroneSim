@@ -50,6 +50,7 @@ async function loadRun(ctx, row) {
   try {
     const result = await api.runResult(row.path);
     store.run = result;
+    store.mcBatch = null;
 
     // Try to load + build the run's scenario map so replay has imagery.
     try {

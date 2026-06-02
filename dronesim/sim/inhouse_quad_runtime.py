@@ -126,6 +126,9 @@ def run_simulation_local(
     desired_z = float(cfg.altitude)
     collision_event: CollisionEvent | None = None
     terminated_by: str | None = None
+    z_pred_abs_err_sum = 0.0
+    z_pred_abs_err_max = 0.0
+    z_pred_samples = 0
 
     report_every = _step_report_interval(T)
 
@@ -147,7 +150,7 @@ def run_simulation_local(
         )
 
         u_step = controller.solve(x0, xr)
-        x0 = controller.step_state(x0, u_step)
+        predicted_next = controller.step_state(x0, u_step)
 
         if cfg.force_noise_std > 0.0:
             noise = rng.normal(0.0, cfg.force_noise_std, size=4)
@@ -155,6 +158,12 @@ def run_simulation_local(
             noise = np.zeros(4)
         ft, tx, ty, tz = (u_step + noise).tolist()
         quad.apply(ft, tx, ty, tz)
+        measured_next = np.asarray(quad.state_vector, dtype=float)
+        x0 = measured_next
+        z_pred_abs_err = abs(float(measured_next[11] - predicted_next[11]))
+        z_pred_abs_err_sum += z_pred_abs_err
+        z_pred_abs_err_max = max(z_pred_abs_err_max, z_pred_abs_err)
+        z_pred_samples += 1
 
         pos[i] = (quad.x, quad.y, quad.z)
         vel[i] = (quad.x_dot, quad.y_dot, quad.z_dot)
@@ -218,7 +227,11 @@ def run_simulation_local(
         "force_noise_std": cfg.force_noise_std,
         "mass_jitter_pct": cfg.mass_jitter_pct,
         "inertia_jitter_pct": cfg.inertia_jitter_pct,
+        "controller_state_source": "measured_plant_state",
     }
+    if z_pred_samples > 0:
+        cfg_summary["z_pred_abs_err_mean_m"] = z_pred_abs_err_sum / z_pred_samples
+        cfg_summary["z_pred_abs_err_max_m"] = z_pred_abs_err_max
     if terminated_by is not None:
         cfg_summary["terminated_by"] = terminated_by
     if collision_event is not None:

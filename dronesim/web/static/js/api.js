@@ -53,6 +53,9 @@ export const api = {
     get(scenarioId ? `/api/runs?scenario_id=${scenarioId}` : "/api/runs"),
   runResult: (path) => get(`/api/runs/result?path=${encodeURIComponent(path)}`),
   startRun: (body) => post("/api/runs/start", body),
+  cancelRun: (runToken) => post("/api/runs/cancel", { run_token: runToken }),
+  mcAnalysis: (paths) => post("/api/runs/mc-analysis", { paths }),
+  mcReplay: (paths) => post("/api/runs/mc-replay", { paths }),
 };
 
 // Open a run-progress WebSocket. Returns the socket; caller wires onmessage.

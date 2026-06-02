@@ -380,8 +380,70 @@ def start_run(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         run_config = scenario.run_config
 
     session = run_session.registry().create()
-    run_session.start_single_run(session, scenario, run_config, state.run_store)
+    mc = run_config.monte_carlo or {}
+    n_trials = int(mc.get("n_trials") or 1)
+    if n_trials > 1:
+        run_session.start_monte_carlo_run(
+            session,
+            scenario,
+            run_config,
+            state.run_store,
+            n_trials=n_trials,
+            workers=int(mc.get("workers") or 1),
+            base_seed=int(mc.get("base_seed") if mc.get("base_seed") is not None else run_config.seed or 0),
+        )
+    else:
+        run_session.start_single_run(session, scenario, run_config, state.run_store)
     return {"run_token": session.token}
+
+
+@app.post("/api/runs/cancel")
+def cancel_run(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    token = payload.get("run_token")
+    if not token:
+        raise HTTPException(status_code=400, detail="run_token required")
+    session = run_session.registry().get(str(token))
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown run token")
+    session.manager.cancel()
+    return {"ok": True}
+
+
+@app.post("/api/runs/mc-analysis")
+def mc_analysis(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    paths = payload.get("paths")
+    if not isinstance(paths, list) or not paths:
+        raise HTTPException(status_code=400, detail="Request must include a non-empty 'paths' list")
+    state = get_state()
+    runs = []
+    for path in paths:
+        try:
+            runs.append(state.run_store.load(str(path)))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail=f"Could not load run: {path}: {exc}") from exc
+    return analysis_mod.mc_analysis_block(runs)
+
+
+@app.post("/api/runs/mc-replay")
+def mc_replay(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    paths = payload.get("paths")
+    if not isinstance(paths, list) or not paths:
+        raise HTTPException(status_code=400, detail="Request must include a non-empty 'paths' list")
+    state = get_state()
+    runs = []
+    for path in paths:
+        try:
+            runs.append(state.run_store.load(str(path)))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail=f"Could not load run: {path}: {exc}") from exc
+
+    center: dict[str, float | None] = {"lat": None, "lon": None}
+    try:
+        scenario = state.scenario_manager.load(runs[0].scenario_id)
+        center = {"lat": scenario.map.center_lat, "lon": scenario.map.center_lon}
+    except Exception:  # noqa: BLE001 - scenario may be gone
+        pass
+    return analysis_mod.mc_replay_block(runs, center=center)
 
 
 @app.websocket("/ws/run/{token}")

@@ -8,6 +8,7 @@ import { mountCreate } from "./views/create.js";
 import { mountReplay } from "./views/replay.js";
 import { renderAnalysis } from "./views/analysis.js";
 import { renderRuns } from "./views/runs.js";
+import { renderScenarios } from "./views/scenarios.js";
 
 const ctx = {
   scene: null,
@@ -35,6 +36,7 @@ function setView(name) {
   });
   const mapView = name === "create" || name === "replay";
   document.getElementById("map-stage").classList.toggle("active", mapView);
+  document.getElementById("scenarios-stage").classList.toggle("active", name === "scenarios");
   document.getElementById("analysis-stage").classList.toggle("active", name === "analysis");
   document.getElementById("runs-stage").classList.toggle("active", name === "runs");
   document.getElementById("replay-bar").hidden = name !== "replay";
@@ -42,6 +44,7 @@ function setView(name) {
 
   if (name === "create") ctx.views.create.show();
   else if (name === "replay") ctx.views.replay.show();
+  else if (name === "scenarios") renderScenarios(ctx);
   else if (name === "analysis") renderAnalysis(ctx);
   else if (name === "runs") renderRuns(ctx);
 

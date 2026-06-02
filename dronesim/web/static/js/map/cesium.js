@@ -15,6 +15,8 @@ export class CesiumScene {
     this.trajectoryEntity = null;
     this.referenceEntity = null;
     this.droneEntity = null;
+    this.trajectoryEntities = [];
+    this.droneEntities = [];
     this.pendingEntity = null;
     this.currentBounds = null;
     this._terrainData = null;
@@ -273,12 +275,16 @@ export class CesiumScene {
     }
   }
 
-  renderReplay({ trajectory = null, reference = null, timeIndex = null, drone = null, lowClearance = false } = {}) {
+  renderReplay({
+    trajectory = null,
+    reference = null,
+    timeIndex = null,
+    drone = null,
+    lowClearance = false,
+    layers = null,
+  } = {}) {
     if (!this.viewer) return;
-    [this.trajectoryEntity, this.referenceEntity, this.droneEntity].forEach((ent) => {
-      if (ent) this.viewer.entities.remove(ent);
-    });
-    this.trajectoryEntity = this.referenceEntity = this.droneEntity = null;
+    this._clearReplayEntities();
 
     if (reference && reference.length >= 2) {
       const positions = [];
@@ -292,34 +298,68 @@ export class CesiumScene {
       });
     }
 
-    if (trajectory && trajectory.length >= 2) {
-      const end = timeIndex != null ? Math.min(timeIndex + 1, trajectory.length) : trajectory.length;
-      const positions = [];
-      for (let i = 0; i < end; i++) positions.push(trajectory[i][1], trajectory[i][0], trajectory[i][2]);
-      const color = lowClearance ? "#ff453a" : "#30d158";
-      if (positions.length >= 6) {
-        this.trajectoryEntity = this.viewer.entities.add({
-          polyline: {
-            positions: Cesium.Cartesian3.fromDegreesArrayHeights(positions),
-            width: 4,
-            material: Cesium.Color.fromCssColorString(color),
-          },
-        });
+    if (layers && layers.length) {
+      for (const layer of layers) {
+        this._addTrajectoryLayer(layer.trajectory, layer.timeIndex, layer.color, layer.lowClearance);
+        this._addDroneLayer(layer.drone, layer.color);
       }
+      return;
     }
 
+    if (trajectory && trajectory.length >= 2) {
+      this._addTrajectoryLayer(trajectory, timeIndex, lowClearance ? "#ff453a" : "#30d158", lowClearance);
+    }
     if (drone) {
-      this.droneEntity = this.viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(drone[1], drone[0], drone[2]),
-        point: {
-          pixelSize: 14,
-          color: Cesium.Color.fromCssColorString("#0a84ff"),
-          outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      this._addDroneLayer(drone, "#0a84ff");
+    }
+  }
+
+  _clearReplayEntities() {
+    [this.trajectoryEntity, this.referenceEntity, this.droneEntity].forEach((ent) => {
+      if (ent) this.viewer.entities.remove(ent);
+    });
+    this.trajectoryEntity = this.referenceEntity = this.droneEntity = null;
+    for (const ent of this.trajectoryEntities) {
+      if (ent) this.viewer.entities.remove(ent);
+    }
+    for (const ent of this.droneEntities) {
+      if (ent) this.viewer.entities.remove(ent);
+    }
+    this.trajectoryEntities = [];
+    this.droneEntities = [];
+  }
+
+  _addTrajectoryLayer(trajectory, timeIndex, color, lowClearance = false) {
+    if (!trajectory || trajectory.length < 2) return;
+    const end = timeIndex != null ? Math.min(timeIndex + 1, trajectory.length) : trajectory.length;
+    const positions = [];
+    for (let i = 0; i < end; i++) positions.push(trajectory[i][1], trajectory[i][0], trajectory[i][2]);
+    const lineColor = lowClearance ? "#ff453a" : color || "#30d158";
+    if (positions.length >= 6) {
+      const ent = this.viewer.entities.add({
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(positions),
+          width: 4,
+          material: Cesium.Color.fromCssColorString(lineColor),
         },
       });
+      this.trajectoryEntities.push(ent);
     }
+  }
+
+  _addDroneLayer(drone, color) {
+    if (!drone) return;
+    const ent = this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(drone[1], drone[0], drone[2]),
+      point: {
+        pixelSize: 14,
+        color: Cesium.Color.fromCssColorString(color || "#0a84ff"),
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+    this.droneEntities.push(ent);
   }
 
   clearReplay() {

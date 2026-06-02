@@ -33,4 +33,4 @@ if [[ "$DEBUG" -eq 1 ]]; then
   echo "DroneSim debug mode: DRONESIM_DEBUG=1 (Cesium + sim logs -> GUI console)"
 fi
 
-exec panel serve app.py --show --autoreload "${PANEL_ARGS[@]}"
+exec uvicorn dronesim.web.server:app --reload

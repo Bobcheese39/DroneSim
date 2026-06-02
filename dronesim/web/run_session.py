@@ -83,15 +83,16 @@ def start_single_run(
                 "miss_distance_m": run.summary.miss_distance_m,
                 "n_steps": len(run.time_s),
                 "path": path,
+                "trial_index": idx,
             }
         )
 
     def _on_error(idx: int, exc: BaseException) -> None:
         msg = str(exc) if isinstance(exc, BackendUnavailable) else repr(exc)
-        session.emit({"type": "error", "message": msg})
+        session.emit({"type": "error", "message": msg, "trial_index": idx})
 
     def _on_done() -> None:
-        session.emit({"type": "done"})
+        session.emit({"type": "done", "mode": "single"})
         session.finished.set()
 
     session.manager.start_single(
@@ -99,6 +100,71 @@ def start_single_run(
         run_config,
         on_result=_on_result,
         on_step_progress=_on_step_progress,
+        on_error=_on_error,
+        on_done=_on_done,
+    )
+
+
+def start_monte_carlo_run(
+    session: RunSession,
+    scenario: ScenarioSpec,
+    run_config: RunConfig,
+    run_store: RunStore,
+    *,
+    n_trials: int,
+    workers: int,
+    base_seed: int,
+) -> None:
+    """Launch Monte Carlo batch; trial-level progress only (no per-step updates)."""
+    completed = {"count": 0}
+
+    def _on_progress(done: int, total: int) -> None:
+        completed["count"] = done
+        session.emit({"type": "trial_progress", "done": int(done), "total": int(total)})
+
+    def _on_result(idx: int, run: RunResult) -> None:
+        path: str | None = None
+        try:
+            path = str(run_store.save(run))
+        except Exception as exc:  # noqa: BLE001
+            session.emit({"type": "log", "level": "err", "message": f"Failed to save run: {exc}"})
+        session.emit(
+            {
+                "type": "result",
+                "run_id": run.run_id,
+                "scenario_id": run.scenario_id,
+                "status": run.status,
+                "success": bool(run.summary.success),
+                "miss_distance_m": run.summary.miss_distance_m,
+                "n_steps": len(run.time_s),
+                "path": path,
+                "trial_index": int(idx),
+            }
+        )
+
+    def _on_error(idx: int, exc: BaseException) -> None:
+        msg = str(exc) if isinstance(exc, BackendUnavailable) else repr(exc)
+        session.emit({"type": "error", "message": msg, "trial_index": int(idx)})
+
+    def _on_done() -> None:
+        session.emit(
+            {
+                "type": "done",
+                "mode": "monte_carlo",
+                "n_trials": int(n_trials),
+                "n_completed": int(completed["count"]),
+            }
+        )
+        session.finished.set()
+
+    session.manager.start_monte_carlo(
+        scenario,
+        run_config,
+        n_trials=n_trials,
+        workers=workers,
+        base_seed=base_seed,
+        on_result=_on_result,
+        on_progress=_on_progress,
         on_error=_on_error,
         on_done=_on_done,
     )

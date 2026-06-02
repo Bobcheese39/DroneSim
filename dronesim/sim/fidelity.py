@@ -84,6 +84,19 @@ class AeroParams:
     def is_active(self) -> bool:
         return self.cd_linear > 0.0 or self.cd_quadratic > 0.0
 
+    def drag_scale(self) -> float:
+        """Scale drag using density*area while preserving legacy defaults.
+
+        The baseline values match the existing defaults (rho=1.225 kg/m^3,
+        area=0.1 m^2), so the default scale remains exactly 1.0.
+        """
+        density = max(0.0, float(self.air_density_kg_m3))
+        area = max(0.0, float(self.reference_area_m2))
+        baseline = 1.225 * 0.1
+        if baseline <= 0.0:
+            return 1.0
+        return (density * area) / baseline
+
 
 @dataclass
 class WindField:
@@ -240,7 +253,8 @@ def _state_derivative(
         vrel = np.array([vx - wind[0], vy - wind[1], vz - wind[2]], dtype=float)
         speed = float(np.linalg.norm(vrel))
         # Linear + quadratic drag, opposing motion through the air mass.
-        drag_force = -(aero.cd_linear * vrel + aero.cd_quadratic * speed * vrel)
+        scale = aero.drag_scale()
+        drag_force = -(scale * aero.cd_linear * vrel + scale * aero.cd_quadratic * speed * vrel)
         ax += drag_force[0] / mass
         ay += drag_force[1] / mass
         az += drag_force[2] / mass

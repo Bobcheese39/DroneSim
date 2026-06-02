@@ -6,11 +6,14 @@ export const store = {
   scenario: null, // working ScenarioSpec dict
   map: null, // { key, center_lat, center_lon, bounds, imagery_url, vertical_exaggeration }
   view: "create", // create | replay | analysis | runs
+  createInspectorTab: "scenario", // scenario | vehicle
   editMode: "trajectory", // view | trajectory | marker | edit
   selection: { kind: null, index: null }, // waypoint | marker
   pendingAltitude: 5.0,
   run: null, // { run: RunResult, analysis, center }
+  mcBatch: null, // { trials: [...], analysis: {...}, replay: {...} | null }
   runToken: null,
+  runSocket: null,
   backends: [],
   status: { text: "Ready", level: "ok" },
 };

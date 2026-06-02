@@ -194,6 +194,63 @@ class WebApiTest(unittest.TestCase):
         self.assertTrue(any(row["metric"] == "miss_distance_m" for row in analysis["summary"]))
         self.assertEqual(body["center"]["lat"], 37.0)
 
+    def test_mc_analysis_endpoint(self) -> None:
+        d = _demo_scenario_dict()
+        saved = self.client.post("/api/scenarios", json=d).json()
+        sid = saved["scenario"]["scenario_id"]
+        paths = []
+        for i in range(3):
+            run = RunResult(
+                run_id=f"run_mc{i}",
+                scenario_id=sid,
+                backend_id="inhouse_mpc_quad",
+                model_id="m",
+                status="completed",
+                time_s=[0.0, 0.1],
+                velocity_mps=[[float(i), 0.0, 0.0], [float(i), 0.0, 0.0]],
+                attitude_rad=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                tracking_error_m=[0.0, float(i + 1)],
+                summary=RunSummary(success=True, miss_distance_m=float(i + 1), duration_s=0.1),
+                metadata={"cfg_summary": {"seed": 10 + i, "monte_carlo": {"trial_index": i}}},
+            )
+            paths.append(str(self.state.run_store.save(run)))
+
+        resp = self.client.post("/api/runs/mc-analysis", json={"paths": paths})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["mode"], "monte_carlo")
+        self.assertEqual(len(body["trials"]), 3)
+        self.assertTrue(body["histogram"]["counts"])
+
+    def test_mc_replay_endpoint(self) -> None:
+        d = _demo_scenario_dict()
+        saved = self.client.post("/api/scenarios", json=d).json()
+        sid = saved["scenario"]["scenario_id"]
+        paths = []
+        for i in range(3):
+            run = RunResult(
+                run_id=f"run_mcr{i}",
+                scenario_id=sid,
+                backend_id="inhouse_mpc_quad",
+                model_id="m",
+                status="completed",
+                time_s=[0.0, 0.1],
+                position_m=[[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]],
+                reference_position_m=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                summary=RunSummary(success=True, miss_distance_m=float(i + 1), duration_s=0.1),
+                metadata={"cfg_summary": {"seed": 10 + i, "monte_carlo": {"trial_index": i}}},
+            )
+            paths.append(str(self.state.run_store.save(run)))
+
+        resp = self.client.post("/api/runs/mc-replay", json={"paths": paths})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["mode"], "monte_carlo_replay")
+        self.assertEqual(len(body["trials"]), 3)
+        self.assertEqual(body["center"]["lat"], 37.0)
+        self.assertEqual(len(body["reference_position_m"]), 2)
+        self.assertEqual(body["trials"][0]["trial_index"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
