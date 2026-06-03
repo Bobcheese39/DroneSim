@@ -1,9 +1,12 @@
 // Native CesiumJS scene wrapper.
 //
-// Ported from the old Panel ReactiveHTML bridge (dronesim/gui/viewers/
-// cesium_viewer.py) but freed of the param.String shuttling, pending-payload
-// queueing, and shadow-DOM root resolution. Cesium is loaded globally from the
-// CDN <script> in index.html.
+// Implements the same local-meters interface as the custom XYZ engine: callers
+// pass positions in local meters { x, y, z } and this adapter converts to/from
+// WGS84 lat/lon internally using the active map center. Cesium is loaded lazily
+// (see map/loader.js) and is only initialized when LLA mode is selected.
+
+import { localToLatLon, latLonToLocal, replayDronePixelSize, replayDroneRadius } from "../state.js";
+import { replayAxisArrows } from "./attitude.js";
 
 export class CesiumScene {
   constructor(containerId, { onClick } = {}) {
@@ -20,7 +23,24 @@ export class CesiumScene {
     this.pendingEntity = null;
     this.currentBounds = null;
     this._terrainData = null;
+    this.center = { lat: 0, lon: 0 };
     this._init();
+  }
+
+  // ---- local-meters <-> geographic helpers ----
+  _carto(x, y, z = 0) {
+    const [lat, lon] = localToLatLon(x, y, this.center.lat, this.center.lon);
+    return Cesium.Cartesian3.fromDegrees(lon, lat, z);
+  }
+
+  _degreesArray(points) {
+    // points: array of [x, y, z] meters -> flat [lon, lat, height, ...]
+    const out = [];
+    for (const p of points) {
+      const [lat, lon] = localToLatLon(p[0], p[1], this.center.lat, this.center.lon);
+      out.push(lon, lat, p.length > 2 ? p[2] : 0);
+    }
+    return out;
   }
 
   _init() {
@@ -84,10 +104,13 @@ export class CesiumScene {
     }
     if (!Cesium.defined(cartesian)) return;
     const carto = Cesium.Cartographic.fromCartesian(cartesian);
+    const lat = Cesium.Math.toDegrees(carto.latitude);
+    const lon = Cesium.Math.toDegrees(carto.longitude);
+    const [x, y] = latLonToLocal(lat, lon, this.center.lat, this.center.lon);
     this.onClick({
-      lat: Cesium.Math.toDegrees(carto.latitude),
-      lon: Cesium.Math.toDegrees(carto.longitude),
-      height: carto.height,
+      x,
+      y,
+      z: carto.height,
       entity_kind: entityKind,
       entity_index: entityIndex,
     });
@@ -212,27 +235,61 @@ export class CesiumScene {
   }
 
   async setMap(mapInfo) {
+    if (mapInfo && mapInfo.center_lat != null && mapInfo.center_lon != null) {
+      this.center = { lat: mapInfo.center_lat, lon: mapInfo.center_lon };
+    }
     await this.setTerrain(mapInfo);
     this.setImagery(mapInfo);
   }
 
-  renderEntities({ waypoints = [], markers = [], pending = null } = {}) {
+  clearMap() {
+    if (!this.viewer) return;
+    if (this.satelliteLayer) {
+      this.viewer.imageryLayers.remove(this.satelliteLayer, true);
+      this.satelliteLayer = null;
+    }
+    this._terrainData = null;
+    this.viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+    this.viewer.scene.globe.depthTestAgainstTerrain = false;
+  }
+
+  renderEntities({ waypoints = [], markers = [], pending = null, waypointStyle = null } = {}) {
     if (!this.viewer) return;
     this.entityRegistry.forEach((ent) => this.viewer.entities.remove(ent));
     this.entityRegistry.clear();
 
     waypoints.forEach((wp, i) => {
-      const ent = this.viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(wp.lon, wp.lat, wp.alt),
-        point: {
-          pixelSize: wp.selected ? 18 : 12,
-          color: Cesium.Color.fromCssColorString(wp.selected ? "#ffd60a" : "#0a84ff"),
-          outlineColor: Cesium.Color.WHITE,
-          outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
-        label: this._labelGraphics(wp.label || `WP${i}`),
-      });
+      const style = wp.style || waypointStyle || "dot";
+      const color = wp.selected ? "#ffd60a" : "#0a84ff";
+      const pos = this._carto(wp.x, wp.y, wp.z);
+      const label = this._labelGraphics(wp.label || `WP${i}`);
+      let ent;
+      if (style === "sphere") {
+        const r = Math.max(wp.radius ?? 0.7, 0.3);
+        ent = this.viewer.entities.add({
+          position: pos,
+          ellipsoid: {
+            radii: new Cesium.Cartesian3(r, r, r),
+            material: Cesium.Color.fromCssColorString(color),
+            outline: true,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1,
+          },
+          label,
+        });
+      } else {
+        ent = this.viewer.entities.add({
+          position: pos,
+          point: {
+            pixelSize: wp.pixelSize ?? (wp.selected ? 18 : 12),
+            color: Cesium.Color.fromCssColorString(color),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label,
+        });
+      }
       ent.dronesim_kind = "waypoint";
       ent.dronesim_index = wp.index != null ? wp.index : i;
       this.entityRegistry.set(`wp_${i}`, ent);
@@ -241,7 +298,7 @@ export class CesiumScene {
     markers.forEach((m, i) => {
       if (m.visible === false) return;
       const ent = this.viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, m.alt),
+        position: this._carto(m.x, m.y, m.z),
         point: {
           pixelSize: (m.size || 10) + (m.selected ? 8 : 0),
           color: Cesium.Color.fromCssColorString(m.selected ? "#ffd60a" : m.color || "#ff453a"),
@@ -262,7 +319,7 @@ export class CesiumScene {
     }
     if (pending) {
       this.pendingEntity = this.viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(pending.lon, pending.lat, pending.alt),
+        position: this._carto(pending.x, pending.y, pending.z),
         point: {
           pixelSize: 16,
           color: Cesium.Color.fromCssColorString(pending.color || "#ffd60a"),
@@ -280,6 +337,11 @@ export class CesiumScene {
     reference = null,
     timeIndex = null,
     drone = null,
+    attitude = null,
+    velocity = null,
+    acceleration = null,
+    vehicleMarkerStyle = "dot",
+    markerAxes = "attitude",
     lowClearance = false,
     layers = null,
   } = {}) {
@@ -287,11 +349,9 @@ export class CesiumScene {
     this._clearReplayEntities();
 
     if (reference && reference.length >= 2) {
-      const positions = [];
-      reference.forEach((p) => positions.push(p[1], p[0], p[2]));
       this.referenceEntity = this.viewer.entities.add({
         polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(positions),
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(this._degreesArray(reference)),
           width: 3,
           material: Cesium.Color.fromCssColorString("#ff9f0a"),
         },
@@ -301,7 +361,9 @@ export class CesiumScene {
     if (layers && layers.length) {
       for (const layer of layers) {
         this._addTrajectoryLayer(layer.trajectory, layer.timeIndex, layer.color, layer.lowClearance);
-        this._addDroneLayer(layer.drone, layer.color);
+        this._addDroneLayer(layer.drone, layer.color, {
+          vehicleMarkerStyle: layer.vehicleMarkerStyle ?? vehicleMarkerStyle,
+        });
       }
       return;
     }
@@ -310,7 +372,13 @@ export class CesiumScene {
       this._addTrajectoryLayer(trajectory, timeIndex, lowClearance ? "#ff453a" : "#30d158", lowClearance);
     }
     if (drone) {
-      this._addDroneLayer(drone, "#0a84ff");
+      this._addDroneLayer(drone, "#0a84ff", {
+        vehicleMarkerStyle,
+        markerAxes,
+        attitude,
+        velocity,
+        acceleration,
+      });
     }
   }
 
@@ -332,8 +400,7 @@ export class CesiumScene {
   _addTrajectoryLayer(trajectory, timeIndex, color, lowClearance = false) {
     if (!trajectory || trajectory.length < 2) return;
     const end = timeIndex != null ? Math.min(timeIndex + 1, trajectory.length) : trajectory.length;
-    const positions = [];
-    for (let i = 0; i < end; i++) positions.push(trajectory[i][1], trajectory[i][0], trajectory[i][2]);
+    const positions = this._degreesArray(trajectory.slice(0, end));
     const lineColor = lowClearance ? "#ff453a" : color || "#30d158";
     if (positions.length >= 6) {
       const ent = this.viewer.entities.add({
@@ -347,28 +414,73 @@ export class CesiumScene {
     }
   }
 
-  _addDroneLayer(drone, color) {
+  _addDroneLayer(
+    drone,
+    color,
+    {
+      vehicleMarkerStyle = "dot",
+      markerAxes = "attitude",
+      attitude = null,
+      velocity = null,
+      acceleration = null,
+    } = {}
+  ) {
     if (!drone) return;
-    const ent = this.viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(drone[1], drone[0], drone[2]),
-      point: {
-        pixelSize: 14,
-        color: Cesium.Color.fromCssColorString(color || "#0a84ff"),
-        outlineColor: Cesium.Color.WHITE,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-    });
+    const pos = this._carto(drone[0], drone[1], drone[2]);
+    const css = color || "#0a84ff";
+    let ent;
+    if (vehicleMarkerStyle === "sphere") {
+      const r = Math.max(replayDroneRadius(), 0.5);
+      ent = this.viewer.entities.add({
+        position: pos,
+        ellipsoid: {
+          radii: new Cesium.Cartesian3(r, r, r),
+          material: Cesium.Color.fromCssColorString(css),
+          outline: true,
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 1,
+        },
+      });
+    } else {
+      ent = this.viewer.entities.add({
+        position: pos,
+        point: {
+          pixelSize: replayDronePixelSize(),
+          color: Cesium.Color.fromCssColorString(css),
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+    }
     this.droneEntities.push(ent);
+
+    const px = drone[0];
+    const py = drone[1];
+    const pz = drone.length > 2 ? drone[2] : 0;
+    const arrows = replayAxisArrows(markerAxes, { attitude, velocity, acceleration });
+    for (const axis of arrows) {
+      const [dx, dy, dz] = axis.dir;
+      const len = axis.length;
+      const end = this._carto(px + dx * len, py + dy * len, pz + dz * len);
+      const arrowEnt = this.viewer.entities.add({
+        polyline: {
+          positions: [this._carto(px, py, pz), end],
+          width: 3,
+          material: Cesium.Color.fromCssColorString(axis.color),
+        },
+      });
+      this.droneEntities.push(arrowEnt);
+    }
   }
 
   clearReplay() {
     this.renderReplay({});
   }
 
-  centerOn({ lat, lon, alt = 0 }) {
+  centerOn({ x = 0, y = 0, z = 0 } = {}) {
     if (!this.viewer) return;
-    const position = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
+    const position = this._carto(x, y, z);
     const sphere = new Cesium.BoundingSphere(position, 50);
     this.viewer.camera.flyToBoundingSphere(sphere, {
       duration: 0.6,
@@ -396,6 +508,25 @@ export class CesiumScene {
       } catch (_e) {
         /* noop */
       }
+    }
+  }
+
+  dispose() {
+    if (this._handler) {
+      try {
+        this._handler.destroy();
+      } catch (_e) {
+        /* noop */
+      }
+      this._handler = null;
+    }
+    if (this.viewer) {
+      try {
+        this.viewer.destroy();
+      } catch (_e) {
+        /* noop */
+      }
+      this.viewer = null;
     }
   }
 }

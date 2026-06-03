@@ -42,6 +42,9 @@ export const api = {
 
   buildMap: (mapSpec, fetchRemote) =>
     post("/api/map/build", { map: mapSpec, fetch_remote: !!fetchRemote }),
+  mapCaches: () => get("/api/map/caches"),
+  uploadMap: async (formData) =>
+    jsonOrThrow(await fetch("/api/map/upload", { method: "POST", body: formData })),
 
   addWaypoint: (body) => post("/api/edit/add-waypoint", body),
   addMarker: (body) => post("/api/edit/add-marker", body),

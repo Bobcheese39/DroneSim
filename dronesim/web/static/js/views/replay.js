@@ -1,7 +1,7 @@
 // Replay view: play/pause/scrub a run's trajectory over the Cesium scene.
 // Supports single-run and synchronized Monte Carlo batch replay.
 
-import { store, localToLatLon } from "../state.js";
+import { store, waypointMarkerRatio } from "../state.js";
 
 const TRIAL_COLORS = [
   "#0a84ff",
@@ -18,6 +18,24 @@ const TRIAL_COLORS = [
   "#a2845e",
 ];
 
+function wpToLocal(wp) {
+  return {
+    x: wp.x_m ?? 0,
+    y: wp.y_m ?? 0,
+    z: wp.z_m != null ? wp.z_m : wp.alt_m || 0,
+  };
+}
+
+function axesHint(mode) {
+  if (mode === "velocity") {
+    return "Marker axes: vx (red), vy (green), vz (blue); length ∝ speed.";
+  }
+  if (mode === "acceleration") {
+    return "Marker axes: ax (red), ay (green), az (blue); length ∝ |acceleration|.";
+  }
+  return "Marker axes: roll (red), pitch (green), yaw (purple); length ∝ |angle|.";
+}
+
 export function mountReplay(ctx) {
   const inspector = document.getElementById("inspector");
   const bar = document.getElementById("replay-bar");
@@ -31,6 +49,11 @@ export function mountReplay(ctx) {
     raf: null,
     lastTs: 0,
     accumulator: 0,
+    display: {
+      waypointStyle: "sphere",
+      vehicleMarkerStyle: "sphere",
+      markerAxes: "attitude",
+    },
   };
 
   function mcReplayData() {
@@ -45,25 +68,33 @@ export function mountReplay(ctx) {
     return store.run && store.run.run ? store.run.run : null;
   }
 
-  function geoCenter() {
-    const mc = mcReplayData();
-    if (mc?.center?.lat != null) return mc.center;
-    const c = store.run && store.run.center;
-    if (c && c.lat != null) return c;
-    return { lat: store.scenario.map.center_lat, lon: store.scenario.map.center_lon };
-  }
-
   function trialColor(trialIndex) {
     return TRIAL_COLORS[trialIndex % TRIAL_COLORS.length];
   }
 
-  function toGeoPath(rows) {
+  function vectorAt(rows, idx) {
     if (!rows || !rows.length) return null;
-    const c = geoCenter();
-    return rows.map((p) => {
-      const [lat, lon] = localToLatLon(p[0], p[1], c.lat, c.lon);
-      return [lat, lon, p.length > 2 ? p[2] : 0];
-    });
+    const row = rows[Math.min(idx, rows.length - 1)];
+    if (!row || row.length < 3) return null;
+    return [row[0], row[1], row[2]];
+  }
+
+  // Both engines consume local meters directly; just normalize to [x, y, z].
+  function toLocalPath(rows) {
+    if (!rows || !rows.length) return null;
+    return rows.map((p) => [p[0], p[1], p.length > 2 ? p[2] : 0]);
+  }
+
+  function attitudeAt(run, idx) {
+    return vectorAt(run.attitude_rad, idx);
+  }
+
+  function velocityAt(run, idx) {
+    return vectorAt(run.velocity_mps, idx);
+  }
+
+  function accelerationAt(run, idx) {
+    return vectorAt(run.acceleration_mps2, idx);
   }
 
   function clearanceArray() {
@@ -103,6 +134,93 @@ export function mountReplay(ctx) {
     return run && run.time_s && run.time_s.length > 1 ? run.time_s[1] - run.time_s[0] : 0.1;
   }
 
+  function renderScenarioWaypoints() {
+    if (!ctx.scene) return;
+    const { waypointStyle } = state.display;
+    const s = store.scenario;
+    if (!s?.waypoints?.waypoints) {
+      ctx.scene.renderEntities({ waypoints: [], markers: [], waypointStyle });
+      return;
+    }
+    const ratio = waypointMarkerRatio();
+    const wps = s.waypoints.waypoints.map((wp, i) => ({
+      index: i,
+      ...wpToLocal(wp),
+      label: wp.label || `WP${i}`,
+      selected: false,
+      pixelSize: Math.round(12 * ratio),
+      radius: 0.7 * ratio,
+      style: waypointStyle,
+    }));
+    ctx.scene.renderEntities({ waypoints: wps, markers: [], waypointStyle });
+  }
+
+  function displayControlsHtml() {
+    const d = state.display;
+    const mc = isMcReplay();
+    const axesOpts = mc
+      ? ""
+      : `
+          <div class="field"><label>Marker axes</label>
+            <select id="rp-marker-axes">
+              <option value="attitude" ${d.markerAxes === "attitude" ? "selected" : ""}>Attitude (R/P/Y)</option>
+              <option value="velocity" ${d.markerAxes === "velocity" ? "selected" : ""}>Velocity</option>
+              <option value="acceleration" ${d.markerAxes === "acceleration" ? "selected" : ""}>Acceleration</option>
+            </select>
+          </div>
+          <div class="hint">${axesHint(d.markerAxes)}</div>`;
+    const mcAxesHint = mc
+      ? `<div class="hint">Marker axes require single-run replay (not available for Monte Carlo batch).</div>`
+      : "";
+
+    return `
+      <div class="insp-section">
+        <h3 class="insp-title">Display</h3>
+        <div class="card">
+          <div class="field"><label>Waypoint style</label>
+            <select id="rp-wp-style">
+              <option value="sphere" ${d.waypointStyle === "sphere" ? "selected" : ""}>Sphere</option>
+              <option value="dot" ${d.waypointStyle === "dot" ? "selected" : ""}>Dot</option>
+            </select>
+          </div>
+          <div class="field"><label>Vehicle marker style</label>
+            <select id="rp-vehicle-style">
+              <option value="sphere" ${d.vehicleMarkerStyle === "sphere" ? "selected" : ""}>Sphere</option>
+              <option value="dot" ${d.vehicleMarkerStyle === "dot" ? "selected" : ""}>Dot</option>
+            </select>
+          </div>
+          ${axesOpts}
+          ${mcAxesHint}
+        </div>
+      </div>`;
+  }
+
+  function wireDisplayControls() {
+    const wpEl = inspector.querySelector("#rp-wp-style");
+    if (wpEl) {
+      wpEl.addEventListener("change", (e) => {
+        state.display.waypointStyle = e.target.value;
+        renderScenarioWaypoints();
+      });
+    }
+    const vehEl = inspector.querySelector("#rp-vehicle-style");
+    if (vehEl) {
+      vehEl.addEventListener("change", (e) => {
+        state.display.vehicleMarkerStyle = e.target.value;
+        renderFrame();
+      });
+    }
+    const axesEl = inspector.querySelector("#rp-marker-axes");
+    if (axesEl) {
+      axesEl.addEventListener("change", (e) => {
+        state.display.markerAxes = e.target.value;
+        const hint = inspector.querySelector(".insp-section .card .hint");
+        if (hint && !isMcReplay()) hint.textContent = axesHint(state.display.markerAxes);
+        renderFrame();
+      });
+    }
+  }
+
   function renderInspector() {
     if (isMcReplay()) {
       renderMcInspector();
@@ -130,8 +248,10 @@ export function mountReplay(ctx) {
           <div class="field"><label>Steps</label><input type="text" value="${frameCount()}" readonly /></div>
         </div>
       </div>
+      ${displayControlsHtml()}
       ${playbackControlsHtml()}
     `;
+    wireDisplayControls();
     wirePlaybackControls();
     renderBar();
   }
@@ -161,8 +281,10 @@ export function mountReplay(ctx) {
         <h3 class="insp-title">Trial colors</h3>
         <div class="card mc-legend">${legend}</div>
       </div>
+      ${displayControlsHtml()}
       ${playbackControlsHtml({ hideClearance: true })}
     `;
+    wireDisplayControls();
     wirePlaybackControls();
     renderBar();
   }
@@ -232,6 +354,14 @@ export function mountReplay(ctx) {
     return `${t.toFixed(1)} / ${run.time_s[run.time_s.length - 1].toFixed(1)} s`;
   }
 
+  function replayDisplayPayload() {
+    const { vehicleMarkerStyle, markerAxes } = state.display;
+    return {
+      vehicleMarkerStyle,
+      markerAxes: isMcReplay() ? null : markerAxes,
+    };
+  }
+
   function renderFrame() {
     if (isMcReplay()) {
       renderMcFrame();
@@ -243,15 +373,26 @@ export function mountReplay(ctx) {
       ctx.scene.clearReplay();
       return;
     }
-    const traj = toGeoPath(run.position_m);
-    const ref = state.showReference ? toGeoPath(run.reference_position_m) : null;
+    const traj = toLocalPath(run.position_m);
+    const ref = state.showReference ? toLocalPath(run.reference_position_m) : null;
     const clearance = clearanceArray();
     let low = false;
     if (state.showClearance && clearance) {
       low = clearance.slice(0, state.timeIndex + 1).some((c) => c != null && c < 1.0);
     }
     const drone = traj && traj.length ? traj[Math.min(state.timeIndex, traj.length - 1)] : null;
-    ctx.scene.renderReplay({ trajectory: traj, reference: ref, timeIndex: state.timeIndex, drone, lowClearance: low });
+    const idx = state.timeIndex;
+    ctx.scene.renderReplay({
+      trajectory: traj,
+      reference: ref,
+      timeIndex: idx,
+      drone,
+      attitude: attitudeAt(run, idx),
+      velocity: velocityAt(run, idx),
+      acceleration: accelerationAt(run, idx),
+      lowClearance: low,
+      ...replayDisplayPayload(),
+    });
     updateBarUi();
   }
 
@@ -262,9 +403,10 @@ export function mountReplay(ctx) {
       return;
     }
 
-    const ref = state.showReference ? toGeoPath(mc.reference_position_m) : null;
+    const { vehicleMarkerStyle } = state.display;
+    const ref = state.showReference ? toLocalPath(mc.reference_position_m) : null;
     const layers = mcTrials().map((trial) => {
-      const traj = toGeoPath(trial.position_m);
+      const traj = toLocalPath(trial.position_m);
       const idx = Math.min(state.timeIndex, (trial.position_m?.length || 1) - 1);
       const drone = traj && traj.length ? traj[Math.max(0, idx)] : null;
       return {
@@ -273,10 +415,11 @@ export function mountReplay(ctx) {
         drone,
         color: trialColor(trial.trial_index),
         lowClearance: false,
+        vehicleMarkerStyle,
       };
     });
 
-    ctx.scene.renderReplay({ reference: ref, layers });
+    ctx.scene.renderReplay({ reference: ref, layers, vehicleMarkerStyle });
     updateBarUi();
   }
 
@@ -332,13 +475,18 @@ export function mountReplay(ctx) {
 
   async function show() {
     stop();
-    if (store.map) await ctx.scene.setMap(store.map);
+    if (store.mapMode === "lla") {
+      if (store.map) await ctx.scene.setMap(store.map);
+    } else if (store.xyz.mapInfo) {
+      await ctx.scene.setMap(store.xyz.mapInfo);
+    }
     state.timeIndex = 0;
     renderInspector();
+    renderScenarioWaypoints();
     renderFrame();
   }
 
-  return { show };
+  return { show, renderFrame, renderScenarioWaypoints };
 }
 
 function fmt(v) {

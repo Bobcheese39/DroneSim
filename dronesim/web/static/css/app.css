@@ -17,8 +17,9 @@
   --radius-sm: 8px;
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.05);
   --toolbar-h: 52px;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Helvetica Neue", system-ui, sans-serif;
+  --font: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  /* --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", system-ui, sans-serif; */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -560,6 +561,87 @@ textarea {
   text-align: right;
 }
 
+.map-debug {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 5;
+  pointer-events: auto;
+}
+
+.map-debug-toggle {
+  appearance: none;
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  color: var(--text-secondary);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow-card);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.map-debug-toggle:hover,
+.map-debug-toggle[aria-expanded="true"] {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--hairline));
+}
+
+.map-debug-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-card);
+}
+
+.map-debug-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.map-debug-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.map-debug-field > span {
+  flex: 1 1 100%;
+}
+
+.map-debug-field input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.map-debug-field output {
+  font-variant-numeric: tabular-nums;
+  min-width: 24px;
+  text-align: right;
+  color: var(--text);
+}
+
 .mc-replay-all {
   margin-top: 4px;
 }
@@ -681,4 +763,86 @@ textarea {
 
 .uplot {
   width: 100% !important;
+}
+
+/* ---------------- Custom XYZ 3D engine ---------------- */
+#map-host {
+  position: relative;
+  overflow: hidden;
+}
+
+.xyz-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.xyz-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.xyz-label {
+  font: 500 11px var(--font);
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  transform: translateY(-2px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Map engine toggle in the create sidebar. */
+#map-mode-switch {
+  width: 100%;
+}
+#map-mode-switch button {
+  flex: 1;
+  min-width: 44px;
+  text-align: center;
+}
+
+/* ---------------- Modal (map source picker) ---------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: 420px;
+  max-width: 92vw;
+  max-height: 84vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 18px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.modal-body {
+  margin-top: 14px;
+}
+
+.modal .list-item {
+  cursor: pointer;
 }

@@ -65,6 +65,7 @@ async function loadRun(ctx, row) {
 
     setStatus(`Loaded run ${row.run_id}.`, "ok");
     ctx.setView("replay");
+    if (ctx.views.replay?.renderScenarioWaypoints) ctx.views.replay.renderScenarioWaypoints();
   } catch (e) {
     setStatus(`Could not load run: ${e.message}`, "err");
   }

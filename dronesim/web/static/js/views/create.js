@@ -2,7 +2,7 @@
 // Cesium scene, selection editing, and save/run.
 
 import { api, openRunSocket } from "../api.js";
-import { store, setStatus, setScenario, setSelection, localToLatLon } from "../state.js";
+import { store, setStatus, setScenario, setSelection, waypointMarkerRatio } from "../state.js";
 
 const CSS_COLORS = {
   red: "#ff453a",
@@ -17,27 +17,21 @@ function cssColor(c) {
   return CSS_COLORS[c] || c;
 }
 
-function center() {
-  const m = store.scenario.map;
-  return { lat: m.center_lat, lon: m.center_lon };
+// Both engines consume local meters { x, y, z }.
+function wpToLocal(wp) {
+  return {
+    x: wp.x_m ?? 0,
+    y: wp.y_m ?? 0,
+    z: wp.z_m != null ? wp.z_m : wp.alt_m || 0,
+  };
 }
 
-function wpToGeo(wp) {
-  const c = center();
-  if (wp.lat != null && wp.lon != null) {
-    return { lat: wp.lat, lon: wp.lon, alt: wp.alt_m != null ? wp.alt_m : wp.z_m || 0 };
-  }
-  const [lat, lon] = localToLatLon(wp.x_m, wp.y_m, c.lat, c.lon);
-  return { lat, lon, alt: wp.z_m != null ? wp.z_m : wp.alt_m || 0 };
-}
-
-function markerToGeo(m) {
-  const c = center();
-  if (m.lat != null && m.lon != null) {
-    return { lat: m.lat, lon: m.lon, alt: m.alt_m != null ? m.alt_m : m.z_m || 0 };
-  }
-  const [lat, lon] = localToLatLon(m.x_m, m.y_m, c.lat, c.lon);
-  return { lat, lon, alt: m.z_m != null ? m.z_m : m.alt_m || 0 };
+function markerToLocal(m) {
+  return {
+    x: m.x_m ?? 0,
+    y: m.y_m ?? 0,
+    z: m.z_m != null ? m.z_m : m.alt_m || 0,
+  };
 }
 
 export function mountCreate(ctx) {
@@ -96,26 +90,19 @@ export function mountCreate(ctx) {
         <div class="card">
           <div class="field"><label>Name</label><input type="text" data-k="name" value="${escapeAttr(s.name)}" /></div>
           <div class="field"><label>Description</label><textarea data-k="description" style="font-family:var(--font);">${escapeHtml(s.description || "")}</textarea></div>
+          <div class="field">
+            <label>Map engine</label>
+            <nav class="segmented compact" id="map-mode-switch" title="3D engine">
+              <button type="button" data-mode="xyz" class="${store.mapMode === "xyz" ? "active" : ""}">XYZ</button>
+              <button type="button" data-mode="lla" class="${store.mapMode === "lla" ? "active" : ""}">LLA</button>
+            </nav>
+          </div>
         </div>
       </div>
 
       <div class="insp-section">
         <h3 class="insp-title">Map</h3>
-        <div class="card">
-          <div class="field-row">
-            <div class="field"><label>Center lat</label><input type="number" step="0.0001" data-mk="center_lat" value="${s.map.center_lat}" /></div>
-            <div class="field"><label>Center lon</label><input type="number" step="0.0001" data-mk="center_lon" value="${s.map.center_lon}" /></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Radius (km)</label><input type="number" step="0.1" data-mk="radius_km" value="${s.map.radius_km}" /></div>
-            <div class="field"><label>Resolution</label><input type="number" step="50" data-mk="resolution" value="${s.map.resolution}" /></div>
-          </div>
-          <div class="field"><label>Vertical exaggeration</label><input type="number" step="0.1" data-mk="vertical_exaggeration" value="${s.map.vertical_exaggeration}" /></div>
-          <div class="field toggle"><span>Fetch remote imagery</span>
-            <label class="switch"><input type="checkbox" id="fetch-remote" /><span class="slider"></span></label>
-          </div>
-          <button class="btn primary full" id="build-map">Build map</button>
-        </div>
+        ${store.mapMode === "xyz" ? mapSectionXyz() : mapSectionLla(s)}
       </div>
 
       <div class="insp-section">
@@ -418,6 +405,35 @@ export function mountCreate(ctx) {
       ctx.buildMap(remote);
     });
 
+    const scaleInput = inspector.querySelector("#xyz-scale");
+    if (scaleInput)
+      scaleInput.addEventListener("change", () => {
+        store.xyz.scale_m = parseFloatOr(scaleInput.value, store.xyz.scale_m);
+        if (ctx.scene.setGround) ctx.scene.setGround(store.xyz.scale_m);
+      });
+    inspector.querySelectorAll("[data-scale-preset]").forEach((b) =>
+      b.addEventListener("click", () => {
+        store.xyz.scale_m = parseFloat(b.dataset.scalePreset);
+        if (ctx.scene.setGround) ctx.scene.setGround(store.xyz.scale_m);
+        render();
+      })
+    );
+    const loadMapBtn = inspector.querySelector("#xyz-load-map");
+    if (loadMapBtn) loadMapBtn.addEventListener("click", () => openMapSourceModal(ctx));
+    const clearMapBtn = inspector.querySelector("#xyz-clear-map");
+    if (clearMapBtn)
+      clearMapBtn.addEventListener("click", () => {
+        store.xyz.mapInfo = null;
+        if (ctx.scene.clearMap) ctx.scene.clearMap();
+        ctx.refreshEntities();
+        setStatus("Custom map cleared.", "ok");
+        render();
+      });
+
+    inspector.querySelectorAll("#map-mode-switch button").forEach((b) =>
+      b.addEventListener("click", () => ctx.switchMapMode(b.dataset.mode))
+    );
+
     inspector.querySelectorAll("#edit-mode button").forEach((b) =>
       b.addEventListener("click", () => {
         store.editMode = b.dataset.mode;
@@ -477,22 +493,28 @@ export function mountCreate(ctx) {
       kind === "waypoint" ? store.scenario.waypoints.waypoints : store.scenario.markers.markers;
     const item = list[index];
     if (!item || !ctx.scene) return;
-    const geo = kind === "waypoint" ? wpToGeo(item) : markerToGeo(item);
-    ctx.scene.centerOn(geo);
+    const pos = kind === "waypoint" ? wpToLocal(item) : markerToLocal(item);
+    ctx.scene.centerOn(pos);
   }
 
   function refreshEntities() {
     const s = store.scenario;
     const sel = store.selection;
-    const wps = s.waypoints.waypoints.map((wp, i) => ({
-      index: i,
-      ...wpToGeo(wp),
-      label: wp.label || "WP" + i,
-      selected: sel.kind === "waypoint" && sel.index === i,
-    }));
+    const ratio = waypointMarkerRatio();
+    const wps = s.waypoints.waypoints.map((wp, i) => {
+      const selected = sel.kind === "waypoint" && sel.index === i;
+      return {
+        index: i,
+        ...wpToLocal(wp),
+        label: wp.label || "WP" + i,
+        selected,
+        pixelSize: Math.round((selected ? 18 : 12) * ratio),
+        radius: (selected ? 1.0 : 0.7) * ratio,
+      };
+    });
     const markers = s.markers.markers.map((m, i) => ({
       index: i,
-      ...markerToGeo(m),
+      ...markerToLocal(m),
       label: m.label,
       color: cssColor(m.color),
       size: m.size,
@@ -527,16 +549,16 @@ export function mountCreate(ctx) {
       if (mode === "trajectory") {
         resp = await api.addWaypoint({
           scenario: store.scenario,
-          lat: evt.lat,
-          lon: evt.lon,
-          alt_m: store.pendingAltitude,
+          x_m: evt.x,
+          y_m: evt.y,
+          z_m: store.pendingAltitude,
         });
       } else if (mode === "marker") {
         resp = await api.addMarker({
           scenario: store.scenario,
-          lat: evt.lat,
-          lon: evt.lon,
-          alt_m: store.pendingAltitude,
+          x_m: evt.x,
+          y_m: evt.y,
+          z_m: store.pendingAltitude,
         });
       } else {
         return;
@@ -729,6 +751,177 @@ export function mountCreate(ctx) {
     handleClick,
     refreshEntities,
   };
+}
+
+// ---- map section builders (mode-aware) ----
+function mapSectionLla(s) {
+  return `
+    <div class="card">
+      <div class="field-row">
+        <div class="field"><label>Center lat</label><input type="number" step="0.0001" data-mk="center_lat" value="${s.map.center_lat}" /></div>
+        <div class="field"><label>Center lon</label><input type="number" step="0.0001" data-mk="center_lon" value="${s.map.center_lon}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Radius (km)</label><input type="number" step="0.1" data-mk="radius_km" value="${s.map.radius_km}" /></div>
+        <div class="field"><label>Resolution</label><input type="number" step="50" data-mk="resolution" value="${s.map.resolution}" /></div>
+      </div>
+      <div class="field"><label>Vertical exaggeration</label><input type="number" step="0.1" data-mk="vertical_exaggeration" value="${s.map.vertical_exaggeration}" /></div>
+      <div class="field toggle"><span>Fetch remote imagery</span>
+        <label class="switch"><input type="checkbox" id="fetch-remote" /><span class="slider"></span></label>
+      </div>
+      <button class="btn primary full" id="build-map">Build map</button>
+    </div>`;
+}
+
+function mapSectionXyz() {
+  const scale = store.xyz.scale_m;
+  const loaded = !!store.xyz.mapInfo;
+  const presets = [1, 10, 100, 1000];
+  return `
+    <div class="card">
+      <div class="hint" style="margin-bottom:8px;">Generic XYZ space (meters). Center is the origin.</div>
+      <div class="field"><label>Scale / radius (m)</label>
+        <input type="number" step="1" min="1" id="xyz-scale" value="${scale}" ${loaded ? "disabled" : ""} /></div>
+      <div class="segmented compact" style="margin-bottom:10px;">
+        ${presets
+          .map(
+            (p) =>
+              `<button data-scale-preset="${p}" class="${p === scale ? "active" : ""}" ${loaded ? "disabled" : ""}>${p >= 1000 ? p / 1000 + "km" : p + "m"}</button>`
+          )
+          .join("")}
+      </div>
+      <button class="btn primary full" id="xyz-load-map">${loaded ? "Replace tile map\u2026" : "Load tile map\u2026"}</button>
+      ${loaded ? '<button class="btn full" id="xyz-clear-map" style="margin-top:8px;">Clear map</button>' : ""}
+      ${loaded ? '<div class="validation ok" style="margin-top:8px;">Custom tile map loaded.</div>' : ""}
+    </div>`;
+}
+
+// ---- map source modal (server cache + upload) ----
+async function applyXyzMap(ctx, mapInfo) {
+  store.xyz.mapInfo = mapInfo;
+  if (ctx.scene.setMap) await ctx.scene.setMap(mapInfo);
+  ctx.refreshEntities();
+}
+
+function openMapSourceModal(ctx) {
+  const existing = document.getElementById("map-source-modal");
+  if (existing) existing.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "map-source-modal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="insp-title" style="margin:0;">Load tile map</h3>
+        <button class="icon-btn" data-close aria-label="Close">\u2715</button>
+      </div>
+      <div class="segmented compact" id="ms-tabs">
+        <button data-ms-tab="cache" class="active">Server cache</button>
+        <button data-ms-tab="upload">Upload</button>
+      </div>
+      <div class="modal-body" id="ms-body"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const body = overlay.querySelector("#ms-body");
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  overlay.querySelector("[data-close]").addEventListener("click", close);
+
+  function setTab(tab) {
+    overlay.querySelectorAll("#ms-tabs button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.msTab === tab)
+    );
+    if (tab === "cache") renderCacheTab();
+    else renderUploadTab();
+  }
+  overlay.querySelectorAll("#ms-tabs button").forEach((b) =>
+    b.addEventListener("click", () => setTab(b.dataset.msTab))
+  );
+
+  async function renderCacheTab() {
+    body.innerHTML = '<div class="hint">Loading cached maps\u2026</div>';
+    let caches = [];
+    try {
+      caches = await api.mapCaches();
+    } catch (e) {
+      body.innerHTML = `<div class="validation warn">Could not list caches: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if (!caches.length) {
+      body.innerHTML = '<div class="hint">No cached maps found in maps/cache.</div>';
+      return;
+    }
+    body.innerHTML = `<div class="list">${caches
+      .map(
+        (c, i) =>
+          `<div class="list-item" data-cache-i="${i}">
+            <span class="swatch" style="background:var(--accent)"></span>${escapeHtml(c.key)}
+            <span class="meta">${c.radius_km != null ? c.radius_km + " km" : ""} ${c.resolution ? "n" + c.resolution : ""}</span>
+          </div>`
+      )
+      .join("")}</div>`;
+    body.querySelectorAll("[data-cache-i]").forEach((el) =>
+      el.addEventListener("click", async () => {
+        const c = caches[parseInt(el.dataset.cacheI, 10)];
+        setStatus("Loading cached map\u2026", "busy");
+        try {
+          const info = await api.buildMap(
+            {
+              center_lat: c.center_lat,
+              center_lon: c.center_lon,
+              radius_km: c.radius_km,
+              resolution: c.resolution,
+            },
+            false
+          );
+          await applyXyzMap(ctx, info);
+          setStatus("Custom tile map loaded.", "ok");
+          close();
+          ctx.views.create.show();
+        } catch (e) {
+          setStatus(`Map load failed: ${e.message}`, "err");
+        }
+      })
+    );
+  }
+
+  function renderUploadTab() {
+    body.innerHTML = `
+      <div class="field"><label>Imagery image (PNG/JPG)</label><input type="file" id="ms-img" accept="image/*" /></div>
+      <div class="field"><label>Elevation (optional: .npy or grayscale image)</label><input type="file" id="ms-elev" accept=".npy,image/*" /></div>
+      <div class="field"><label>Map width (m)</label><input type="number" step="1" min="1" id="ms-scale" value="${store.xyz.scale_m * 2}" /></div>
+      <button class="btn primary full" id="ms-upload">Upload &amp; load</button>
+      <div id="ms-upload-status"></div>`;
+    body.querySelector("#ms-upload").addEventListener("click", async () => {
+      const imgEl = body.querySelector("#ms-img");
+      const elevEl = body.querySelector("#ms-elev");
+      const statusEl = body.querySelector("#ms-upload-status");
+      if (!imgEl.files || !imgEl.files[0]) {
+        statusEl.innerHTML = '<div class="validation warn">Choose an imagery image first.</div>';
+        return;
+      }
+      const fd = new FormData();
+      fd.append("imagery", imgEl.files[0]);
+      if (elevEl.files && elevEl.files[0]) fd.append("elevation", elevEl.files[0]);
+      fd.append("scale_m", String(parseFloatOr(body.querySelector("#ms-scale").value, store.xyz.scale_m * 2)));
+      setStatus("Uploading map\u2026", "busy");
+      try {
+        const info = await api.uploadMap(fd);
+        await applyXyzMap(ctx, info);
+        setStatus("Custom tile map loaded.", "ok");
+        close();
+        ctx.views.create.show();
+      } catch (e) {
+        statusEl.innerHTML = `<div class="validation warn">${escapeHtml(e.message)}</div>`;
+        setStatus(`Upload failed: ${e.message}`, "err");
+      }
+    });
+  }
+
+  setTab("cache");
 }
 
 // ---- small format/escape helpers ----

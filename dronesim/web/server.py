@@ -7,19 +7,34 @@ from __future__ import annotations
 
 import asyncio
 import io
+import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+import numpy as np
+from fastapi import (
+    Body,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 
 from dronesim.models import MapSpec, RunConfig, ScenarioSpec
 from dronesim.services.terrain import (
+    MapAsset,
     MapCacheMiss,
     bounding_box,
     compute_run_clearance_m,
     encode_cesium_heightmap,
+    local_to_lat_lon,
 )
 from dronesim.web import analysis as analysis_mod
 from dronesim.web import run_session
@@ -43,6 +58,20 @@ def _map_spec_from_payload(payload: dict[str, Any]) -> MapSpec:
         if k in MapSpec.__dataclass_fields__  # type: ignore[attr-defined]
     }
     return MapSpec(**fields)
+
+
+def _extent_m(asset: MapAsset) -> dict[str, float]:
+    """East/north span of a map asset in local meters (for the XYZ engine)."""
+    x = asset.x_grid_m
+    y = asset.y_grid_m
+    return {
+        "width": float(x.max() - x.min()),
+        "height": float(y.max() - y.min()),
+        "x_min": float(x.min()),
+        "x_max": float(x.max()),
+        "y_min": float(y.min()),
+        "y_max": float(y.max()),
+    }
 
 
 def _cache_miss_payload(exc: MapCacheMiss) -> dict[str, Any]:
@@ -172,6 +201,121 @@ def build_map(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         "center_lon": spec.center_lon,
         "vertical_exaggeration": spec.vertical_exaggeration,
         "bounds": {"west": lon_min, "east": lon_max, "south": lat_min, "north": lat_max},
+        "extent_m": _extent_m(asset),
+        "imagery_url": f"/api/map/imagery/{key}.png",
+        "heightmap_url": f"/api/map/heightmap/{key}.bin",
+        "heightmap": {
+            "width": hm["width"],
+            "height": hm["height"],
+            "height_offset": hm["height_offset"],
+            "height_scale": hm["height_scale"],
+        },
+    }
+
+
+@app.get("/api/map/caches")
+def list_map_caches() -> list[dict[str, Any]]:
+    """List processed map caches available on disk for the XYZ map picker."""
+    return get_state().terrain_service._list_available_caches()
+
+
+def _decode_elevation_upload(filename: str, data: bytes) -> np.ndarray:
+    """Decode an uploaded elevation file (.npy or grayscale image) to meters."""
+    name = (filename or "").lower()
+    if name.endswith(".npy"):
+        arr = np.load(io.BytesIO(data))
+        return np.asarray(arr, dtype=np.float32)
+    with Image.open(io.BytesIO(data)) as img:
+        gray = img.convert("F")
+        return np.asarray(gray, dtype=np.float32)
+
+
+@app.post("/api/map/upload")
+async def upload_map(
+    imagery: UploadFile = File(...),
+    elevation: UploadFile | None = File(default=None),
+    scale_m: float = Form(default=200.0),
+) -> dict[str, Any]:
+    """Build a synthetic local-meters map asset from uploaded files.
+
+    The map is centered at the origin (0, 0) and spans ``scale_m`` meters in the
+    east-west direction; the north-south span follows the elevation/imagery
+    aspect ratio. Returns the same shape as ``/api/map/build``.
+    """
+    state = get_state()
+    try:
+        sat = Image.open(io.BytesIO(await imagery.read())).convert("RGB")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Bad imagery file: {exc}") from exc
+
+    if elevation is not None:
+        try:
+            elevation_m = _decode_elevation_upload(elevation.filename, await elevation.read())
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Bad elevation file: {exc}") from exc
+        if elevation_m.ndim != 2:
+            raise HTTPException(status_code=400, detail="Elevation must be a 2D grid")
+    else:
+        elevation_m = np.zeros((sat.height, sat.width), dtype=np.float32)
+
+    if scale_m <= 0:
+        raise HTTPException(status_code=400, detail="scale_m must be positive")
+
+    rows, cols = elevation_m.shape
+    if rows < 2 or cols < 2:
+        raise HTTPException(status_code=400, detail="Elevation grid too small")
+
+    width_m = float(scale_m)
+    height_m = width_m * (rows / cols)
+    half_w = width_m / 2.0
+    half_h = height_m / 2.0
+
+    xs = np.linspace(-half_w, half_w, cols)
+    ys = np.linspace(half_h, -half_h, rows)  # row 0 = north edge
+    x_grid, y_grid = np.meshgrid(xs, ys)
+    lat_grid, lon_grid = local_to_lat_lon(x_grid, y_grid, 0.0, 0.0)
+
+    radius_km = max(half_w, half_h) / 1000.0
+    key = f"upload_{uuid.uuid4().hex[:12]}"
+    spec = MapSpec(
+        center_lat=0.0,
+        center_lon=0.0,
+        radius_km=max(radius_km, 0.001),
+        resolution=max(cols, 16),
+        name="uploaded_map",
+        cache_key=key,
+    )
+    bounds = (
+        float(lat_grid.min()),
+        float(lon_grid.min()),
+        float(lat_grid.max()),
+        float(lon_grid.max()),
+    )
+    asset = MapAsset(
+        spec=spec,
+        bounds=bounds,
+        zoom=0,
+        satellite=sat,
+        elevation_m=elevation_m,
+        lat_grid=lat_grid,
+        lon_grid=lon_grid,
+        x_grid_m=x_grid,
+        y_grid_m=y_grid,
+        cache_dir=state.terrain_service.cache_root / key,
+        origin="upload",
+    )
+    state.cache_map_asset(asset)
+
+    hm = encode_cesium_heightmap(elevation_m, vertical_exaggeration=spec.vertical_exaggeration)
+    lat_min, lon_min, lat_max, lon_max = bounds
+    return {
+        "key": key,
+        "origin": "upload",
+        "center_lat": 0.0,
+        "center_lon": 0.0,
+        "vertical_exaggeration": spec.vertical_exaggeration,
+        "bounds": {"west": lon_min, "east": lon_max, "south": lat_min, "north": lat_max},
+        "extent_m": _extent_m(asset),
         "imagery_url": f"/api/map/imagery/{key}.png",
         "heightmap_url": f"/api/map/heightmap/{key}.bin",
         "heightmap": {

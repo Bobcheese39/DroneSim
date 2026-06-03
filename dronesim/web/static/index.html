@@ -4,12 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DroneSim</title>
-    <link
-      rel="stylesheet"
-      href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css"
-    />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
     <link rel="stylesheet" href="/css/app.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body>
     <header class="toolbar">
@@ -35,9 +39,36 @@
 
       <section class="stage">
         <div class="stage-panel active" id="map-stage">
-          <div id="cesium" class="cesium-host"></div>
+          <div id="map-host" class="cesium-host"></div>
           <div class="map-hud" id="map-hud"></div>
           <div class="replay-bar" id="replay-bar" hidden></div>
+          <div class="map-debug" id="map-debug" hidden>
+            <button
+              type="button"
+              class="map-debug-toggle"
+              id="map-debug-toggle"
+              aria-label="Debug options"
+              aria-expanded="false"
+              aria-controls="map-debug-panel"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M8 2h8l1 4 4 1v8l-4 1-1 4H8l-1-4-4-1V7l4-1 1-4zm4 6a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div class="map-debug-panel" id="map-debug-panel" hidden>
+              <div class="map-debug-title">Debug</div>
+              <label class="map-debug-field">
+                <span>Waypoint marker size</span>
+                <input type="range" id="debug-wp-size" min="4" max="36" step="1" value="12" />
+                <output id="debug-wp-size-val" for="debug-wp-size">12</output>
+              </label>
+            </div>
+          </div>
         </div>
         <div class="stage-panel" id="scenarios-stage"></div>
         <div class="stage-panel" id="analysis-stage"></div>
@@ -45,7 +76,6 @@
       </section>
     </main>
 
-    <script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
     <script type="module" src="/js/main.js"></script>
   </body>

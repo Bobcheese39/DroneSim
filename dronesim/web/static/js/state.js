@@ -5,6 +5,8 @@ const listeners = new Set();
 export const store = {
   scenario: null, // working ScenarioSpec dict
   map: null, // { key, center_lat, center_lon, bounds, imagery_url, vertical_exaggeration }
+  mapMode: "xyz", // xyz (custom Three.js engine) | lla (Cesium)
+  xyz: { scale_m: 100, mapInfo: null }, // custom-engine settings (client-only)
   view: "create", // create | replay | analysis | runs
   createInspectorTab: "scenario", // scenario | vehicle
   editMode: "trajectory", // view | trajectory | marker | edit
@@ -16,7 +18,23 @@ export const store = {
   runSocket: null,
   backends: [],
   status: { text: "Ready", level: "ok" },
+  debug: {
+    menuOpen: false,
+    waypointMarkerSize: 12,
+  },
 };
+
+export function waypointMarkerRatio() {
+  return (store.debug?.waypointMarkerSize ?? 12) / 12;
+}
+
+export function replayDronePixelSize() {
+  return Math.round(14 * waypointMarkerRatio());
+}
+
+export function replayDroneRadius() {
+  return 0.9 * waypointMarkerRatio();
+}
 
 export function subscribe(fn) {
   listeners.add(fn);
