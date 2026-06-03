@@ -63,7 +63,9 @@ class WebApiTest(unittest.TestCase):
 
     def test_backends(self) -> None:
         rows = self.client.get("/api/backends").json()
-        self.assertTrue(any(r["backend_id"] == "inhouse_mpc_quad" for r in rows))
+        ids = {r["backend_id"] for r in rows}
+        self.assertIn("inhouse_mpc_quad", ids)
+        self.assertIn("jsbsim_cessna", ids)
 
     # -- scenario CRUD + validate --------------------------------------
     def test_validate_and_save_and_list(self) -> None:

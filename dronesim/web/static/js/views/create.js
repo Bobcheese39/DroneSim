@@ -12,6 +12,8 @@ const CSS_COLORS = {
   orange: "#ff9f0a",
 };
 
+const JSBSIM_CESSNA_BACKEND = "jsbsim_cessna";
+
 function cssColor(c) {
   if (!c) return "#ff453a";
   return CSS_COLORS[c] || c;
@@ -154,12 +156,17 @@ export function mountCreate(ctx) {
     const aero = params.aero;
     const env = s.environment;
     const wind = Array.isArray(env.wind_mps) ? env.wind_mps : [0, 0, 0];
+    const fixedWing = isFixedWingVehicle(s, rc);
     return `
       <div class="insp-section">
         <h3 class="insp-title">Run profile</h3>
         <div class="card">
           <div class="hint" style="margin-bottom:8px;">
-            Advanced fidelity options currently apply to In-house MPC backend.
+            ${
+              fixedWing
+                ? "JSBSim Cessna uses fixed-wing waypoint guidance and normalized flight-control commands."
+                : "Advanced fidelity options currently apply to In-house MPC backend."
+            }
           </div>
           <div class="field"><label>${labelWithTip("Backend", "Simulation backend used when you launch a run.")}</label><select data-rk="backend_id">${backendOptions(rc.backend_id)}</select></div>
           <div class="field-row">
@@ -168,65 +175,28 @@ export function mountCreate(ctx) {
           </div>
           <div class="field-row">
             <div class="field"><label>${labelWithTip("Max steps", "Hard cap on simulated control steps before a run is marked complete.")}</label><input type="number" step="10" data-rk="max_steps" value="${safeNum(rc.max_steps, 250)}" /></div>
-            <div class="field"><label>${labelWithTip("Waypoint threshold (m)", "Distance used to mark waypoint completion and advance to the next segment.")}</label><input type="number" step="0.01" data-rk="waypoint_threshold_m" value="${safeNum(rc.waypoint_threshold_m, 0.25)}" /></div>
+            <div class="field"><label>${labelWithTip(
+              "Waypoint threshold (m)",
+              fixedWing
+                ? "Final approach tolerance (horizontal and vertical). Leg-to-leg capture uses Waypoint capture radius in the Fixed-Wing section."
+                : "Distance used to mark waypoint completion and advance to the next segment."
+            )}</label><input type="number" step="0.01" data-rk="waypoint_threshold_m" value="${safeNum(rc.waypoint_threshold_m, fixedWing ? 50 : 0.25)}" /></div>
           </div>
-          <div class="field-row">
-            <div class="field"><label>${labelWithTip("Horizon", "MPC prediction horizon in control steps.")}</label><input type="number" step="1" data-rk="horizon" value="${safeNum(rc.horizon, 20)}" /></div>
-            <div class="field"><label>${labelWithTip("Lookahead", "Spline lookahead length used by the waypoint tracker.")}</label><input type="number" step="1" data-rk="lookahead" value="${safeNum(rc.lookahead, 60)}" /></div>
-          </div>
+          ${
+            fixedWing
+              ? ""
+              : `<div class="field-row">
+                  <div class="field"><label>${labelWithTip("Horizon", "MPC prediction horizon in control steps.")}</label><input type="number" step="1" data-rk="horizon" value="${safeNum(rc.horizon, 20)}" /></div>
+                  <div class="field"><label>${labelWithTip("Lookahead", "Spline lookahead length used by the waypoint tracker.")}</label><input type="number" step="1" data-rk="lookahead" value="${safeNum(rc.lookahead, 60)}" /></div>
+                </div>`
+          }
           <div class="field"><label>${labelWithTip("Seed", "Optional base seed for deterministic sampling. Leave blank for backend default behavior.")}</label><input type="number" step="1" data-rk="seed" value="${rc.seed == null ? "" : rc.seed}" placeholder="auto" /></div>
         </div>
       </div>
 
-      <div class="insp-section">
-        <h3 class="insp-title">Solver &amp; Fidelity</h3>
-        <div class="card">
-          <div class="field-row">
-            <div class="field">
-              <label>${labelWithTip("Integration method", "Euler reproduces legacy behavior; RK4 improves numerical accuracy on extended dynamics.")}</label>
-              <select data-rk="integration_method">
-                ${optionHtml("euler", rc.integration_method)}
-                ${optionHtml("rk4", rc.integration_method)}
-              </select>
-            </div>
-            <div class="field">
-              <label>${labelWithTip("Fidelity mode", "Auto enables extended runtime when advanced knobs are non-default. Legacy forces vendor path.")}</label>
-              <select data-rk="fidelity_mode">
-                ${optionHtml("auto", rc.fidelity_mode)}
-                ${optionHtml("legacy", rc.fidelity_mode)}
-                ${optionHtml("extended", rc.fidelity_mode)}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
+      ${fixedWing ? fixedWingSection(vehicle) : quadFidelitySection(rc)}
 
-      <div class="insp-section">
-        <h3 class="insp-title">Vehicle Mass &amp; Inertia</h3>
-        <div class="card">
-          <div class="field-row">
-            <div class="field"><label>${labelWithTip("Mass (kg)", "Vehicle mass used by translational dynamics and Monte Carlo mass jitter.")}</label><input type="number" step="0.01" data-vk="parameters.mass" value="${safeNum(params.mass, 5)}" /></div>
-            <div class="field"><label>${labelWithTip("Ix (kg·m²)", "Roll-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Ix" value="${safeNum(params.Ix, 1)}" /></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>${labelWithTip("Iy (kg·m²)", "Pitch-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Iy" value="${safeNum(params.Iy, 1)}" /></div>
-            <div class="field"><label>${labelWithTip("Iz (kg·m²)", "Yaw-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Iz" value="${safeNum(params.Iz, 1.5)}" /></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="insp-section vehicle-detail">
-        <details open>
-          <summary>Aerodynamics</summary>
-          <div class="card">
-            <div class="field-row">
-              <div class="field"><label>${labelWithTip("Linear drag coefficient", "Velocity-proportional drag term for extended in-house dynamics.")}</label><input type="number" step="0.001" data-vk="parameters.aero.cd_linear" value="${safeNum(aero.cd_linear, 0)}" /></div>
-              <div class="field"><label>${labelWithTip("Quadratic drag coefficient", "Speed-squared drag term for extended in-house dynamics.")}</label><input type="number" step="0.001" data-vk="parameters.aero.cd_quadratic" value="${safeNum(aero.cd_quadratic, 0)}" /></div>
-            </div>
-            <div class="field"><label>${labelWithTip("Reference area (m²)", "Frontal reference area used to scale aerodynamic drag force.")}</label><input type="number" step="0.001" data-vk="parameters.aero.reference_area_m2" value="${safeNum(aero.reference_area_m2, 0.1)}" /></div>
-          </div>
-        </details>
-      </div>
+      ${fixedWing ? "" : quadVehicleSections(params, aero)}
 
       <div class="insp-section vehicle-detail">
         <details open>
@@ -275,6 +245,141 @@ export function mountCreate(ctx) {
               ${mcField("mass_jitter_pct", "Mass jitter (%)", mc.mass_jitter_pct ?? 0, 0.1, "Percent mass randomization applied per trial.")}
               ${mcField("inertia_jitter_pct", "Inertia jitter (%)", mc.inertia_jitter_pct ?? 0, 0.1, "Percent inertia randomization applied per trial.")}
             </div>
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
+  function quadFidelitySection(rc) {
+    return `
+      <div class="insp-section">
+        <h3 class="insp-title">Solver &amp; Fidelity</h3>
+        <div class="card">
+          <div class="field-row">
+            <div class="field">
+              <label>${labelWithTip("Integration method", "Euler reproduces legacy behavior; RK4 improves numerical accuracy on extended dynamics.")}</label>
+              <select data-rk="integration_method">
+                ${optionHtml("euler", rc.integration_method)}
+                ${optionHtml("rk4", rc.integration_method)}
+              </select>
+            </div>
+            <div class="field">
+              <label>${labelWithTip("Fidelity mode", "Auto enables extended runtime when advanced knobs are non-default. Legacy forces vendor path.")}</label>
+              <select data-rk="fidelity_mode">
+                ${optionHtml("auto", rc.fidelity_mode)}
+                ${optionHtml("legacy", rc.fidelity_mode)}
+                ${optionHtml("extended", rc.fidelity_mode)}
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function fixedWingSection(vehicle) {
+    const params = vehicle.parameters || {};
+    const controller = vehicle.controller || {};
+    const altRef = String(params.altitude_reference || "agl").toLowerCase() === "msl" ? "msl" : "agl";
+    const engineOn = params.engine_running !== false && params.engine_running !== "false";
+    return `
+      <div class="insp-section">
+        <h3 class="insp-title">Fixed-Wing Vehicle</h3>
+        <div class="card">
+          <div class="field"><label>${labelWithTip("Aircraft model", "JSBSim aircraft model name. The default matches the packaged Cessna 172 model used by common JSBSim installs.")}</label><input type="text" data-vtext="parameters.aircraft" value="${escapeAttr(params.aircraft || params.aircraft_xml || "c172p")}" /></div>
+          <div class="field-row">
+            <div class="field">
+              <label>${labelWithTip("Altitude reference", "Whether waypoint and spawn heights are above ground level (AGL) or mean sea level (MSL).")}</label>
+              <select data-vtext="parameters.altitude_reference">
+                <option value="agl" ${altRef === "agl" ? "selected" : ""}>AGL (above terrain)</option>
+                <option value="msl" ${altRef === "msl" ? "selected" : ""}>MSL (absolute)</option>
+              </select>
+            </div>
+            <div class="field"><label>${labelWithTip("Initial IAS (m/s)", "Calibrated airspeed at simulation start.")}</label><input type="number" step="0.5" data-vk="parameters.initial_ias_mps" value="${safeNum(params.initial_ias_mps, 40)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Initial heading (deg)", "Leave blank to auto-align with the first leg (WP0 toward WP1).")}</label><input type="number" step="0.1" data-vtext="parameters.initial_heading_deg" value="${params.initial_heading_deg != null && params.initial_heading_deg !== "" ? escapeAttr(params.initial_heading_deg) : ""}" placeholder="auto" /></div>
+            <div class="field"><label>${labelWithTip("Initial flight-path (deg)", "Climb/descent angle at start. 0 is level.")}</label><input type="number" step="0.5" data-vk="parameters.initial_flight_path_deg" value="${safeNum(params.initial_flight_path_deg, 0)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Initial pitch (deg)", "Pitch attitude at start.")}</label><input type="number" step="0.5" data-vk="parameters.initial_pitch_deg" value="${safeNum(params.initial_pitch_deg, 0)}" /></div>
+            <div class="field"><label>${labelWithTip("Initial roll (deg)", "Roll attitude at start.")}</label><input type="number" step="0.5" data-vk="parameters.initial_roll_deg" value="${safeNum(params.initial_roll_deg, 0)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Cruise speed (m/s)", "Target airspeed (clamped to 15–70 m/s in the backend).")}</label><input type="number" step="0.5" data-vk="controller.cruise_speed_mps" value="${safeNum(controller.cruise_speed_mps, 40)}" /></div>
+            <div class="field"><label>${labelWithTip("Waypoint capture radius (m)", "Horizontal distance to advance to the next waypoint.")}</label><input type="number" step="1" data-vk="controller.waypoint_capture_radius_m" value="${safeNum(controller.waypoint_capture_radius_m, 75)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Max bank (deg)", "Maximum intended bank for heading control.")}</label><input type="number" step="1" data-vk="controller.max_bank_deg" value="${safeNum(controller.max_bank_deg, 25)}" /></div>
+            <div class="field"><label>${labelWithTip("Min AGL (m)", "Minimum altitude above terrain before protective climb.")}</label><input type="number" step="1" data-vk="controller.min_agl_m" value="${safeNum(controller.min_agl_m, 10)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Base throttle", "Nominal throttle command before speed correction.")}</label><input type="number" step="0.01" min="0" max="1" data-vk="controller.base_throttle" value="${safeNum(controller.base_throttle, 0.65)}" /></div>
+            <div class="field"><label>${labelWithTip("Heading gain", "Aileron response to heading error.")}</label><input type="number" step="0.1" data-vk="controller.heading_gain" value="${safeNum(controller.heading_gain, 1.5)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Altitude gain", "Scales commanded flight-path angle from altitude error.")}</label><input type="number" step="0.001" data-vk="controller.altitude_gain" value="${safeNum(controller.altitude_gain, 0.012)}" /></div>
+            <div class="field"><label>${labelWithTip("Pitch gain", "Optional override for vertical tracking; defaults from altitude gain.")}</label><input type="number" step="0.01" data-vk="controller.pitch_gain" value="${safeNum(controller.pitch_gain, controller.altitude_gain != null ? controller.altitude_gain * 80 : 0.96)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Throttle gain", "Throttle response to airspeed error.")}</label><input type="number" step="0.001" data-vk="controller.throttle_gain" value="${safeNum(controller.throttle_gain, 0.02)}" /></div>
+            <div class="field"><label>${labelWithTip("Elevator trim", "Baseline elevator command.")}</label><input type="number" step="0.01" min="-1" max="1" data-vk="controller.elevator_trim" value="${safeNum(controller.elevator_trim, 0)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Max sink rate (m/s)", "Triggers extra climb command when exceeded.")}</label><input type="number" step="0.5" data-vk="controller.max_sink_rate_mps" value="${safeNum(controller.max_sink_rate_mps, 5)}" /></div>
+            <div class="field"><label>${labelWithTip("Max climb/descent (deg)", "Limits commanded flight-path angle.")}</label><input type="number" step="0.5" data-vk="controller.max_climb_deg" value="${safeNum(controller.max_climb_deg, 8)}" /></div>
+          </div>
+          <div class="field"><label>${labelWithTip("JSBSim root/path", "Optional root directory for JSBSim aircraft, engine, and systems data. Leave blank for package defaults.")}</label><input type="text" data-vtext="parameters.jsbsim_root" value="${escapeAttr(params.jsbsim_root || "")}" placeholder="auto" /></div>
+        </div>
+      </div>
+      <div class="insp-section vehicle-detail">
+        <details>
+          <summary>Fixed-Wing Advanced</summary>
+          <div class="card">
+            <div class="field-row">
+              <div class="field"><label>${labelWithTip("Aircraft data path", "Optional aircraft XML directory for load_model_with_paths.")}</label><input type="text" data-vtext="parameters.aircraft_path" value="${escapeAttr(params.aircraft_path || "")}" placeholder="auto" /></div>
+              <div class="field"><label>${labelWithTip("Engine data path", "Optional engine XML directory.")}</label><input type="text" data-vtext="parameters.engine_path" value="${escapeAttr(params.engine_path || "")}" placeholder="auto" /></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>${labelWithTip("Systems data path", "Optional systems XML directory.")}</label><input type="text" data-vtext="parameters.systems_path" value="${escapeAttr(params.systems_path || "")}" placeholder="auto" /></div>
+              <div class="field"><label>${labelWithTip("Flap command", "Normalized flap deflection (0–1).")}</label><input type="number" step="0.01" min="0" max="1" data-vk="parameters.flap_cmd_norm" value="${safeNum(params.flap_cmd_norm, 0)}" /></div>
+            </div>
+            <div class="field toggle">
+              <span class="toggle-label">${labelWithTip("Engine running at start", "Starts the JSBSim piston engine before the run loop.")}</span>
+              <label class="switch"><input type="checkbox" data-vehicle-bool="parameters.engine_running" ${engineOn ? "checked" : ""} /><span class="slider"></span></label>
+            </div>
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
+  function quadVehicleSections(params, aero) {
+    return `
+      <div class="insp-section">
+        <h3 class="insp-title">Vehicle Mass &amp; Inertia</h3>
+        <div class="card">
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Mass (kg)", "Vehicle mass used by translational dynamics and Monte Carlo mass jitter.")}</label><input type="number" step="0.01" data-vk="parameters.mass" value="${safeNum(params.mass, 5)}" /></div>
+            <div class="field"><label>${labelWithTip("Ix (kg·m²)", "Roll-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Ix" value="${safeNum(params.Ix, 1)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Iy (kg·m²)", "Pitch-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Iy" value="${safeNum(params.Iy, 1)}" /></div>
+            <div class="field"><label>${labelWithTip("Iz (kg·m²)", "Yaw-axis moment of inertia.")}</label><input type="number" step="0.001" data-vk="parameters.Iz" value="${safeNum(params.Iz, 1.5)}" /></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="insp-section vehicle-detail">
+        <details open>
+          <summary>Aerodynamics</summary>
+          <div class="card">
+            <div class="field-row">
+              <div class="field"><label>${labelWithTip("Linear drag coefficient", "Velocity-proportional drag term for extended in-house dynamics.")}</label><input type="number" step="0.001" data-vk="parameters.aero.cd_linear" value="${safeNum(aero.cd_linear, 0)}" /></div>
+              <div class="field"><label>${labelWithTip("Quadratic drag coefficient", "Speed-squared drag term for extended in-house dynamics.")}</label><input type="number" step="0.001" data-vk="parameters.aero.cd_quadratic" value="${safeNum(aero.cd_quadratic, 0)}" /></div>
+            </div>
+            <div class="field"><label>${labelWithTip("Reference area (m²)", "Frontal reference area used to scale aerodynamic drag force.")}</label><input type="number" step="0.001" data-vk="parameters.aero.reference_area_m2" value="${safeNum(aero.reference_area_m2, 0.1)}" /></div>
           </div>
         </details>
       </div>
@@ -347,6 +452,10 @@ export function mountCreate(ctx) {
         const textKeys = ["backend_id", "integration_method", "fidelity_mode"];
         if (textKeys.includes(k)) {
           store.scenario.run_config[k] = el.value;
+          if (k === "backend_id") {
+            applyVehiclePresetForBackend(store.scenario, el.value);
+            render();
+          }
           return;
         }
         if (k === "seed") {
@@ -364,6 +473,16 @@ export function mountCreate(ctx) {
         const path = el.dataset.vk;
         const prior = getByPath(store.scenario.vehicle, path, 0);
         setByPath(store.scenario.vehicle, path, parseFloatOr(el.value, prior));
+      })
+    );
+    inspector.querySelectorAll("[data-vtext]").forEach((el) =>
+      el.addEventListener("change", () => {
+        setByPath(store.scenario.vehicle, el.dataset.vtext, String(el.value || "").trim());
+      })
+    );
+    inspector.querySelectorAll("[data-vehicle-bool]").forEach((el) =>
+      el.addEventListener("change", () => {
+        setByPath(store.scenario.vehicle, el.dataset.vehicleBool, !!el.checked);
       })
     );
     inspector.querySelectorAll("[data-ek]").forEach((el) =>
@@ -1011,11 +1130,75 @@ function ensureRunConfigObj(scenario) {
   if (!rc.fidelity_mode) rc.fidelity_mode = "auto";
 }
 
-function ensureVehicleObj(scenario) {
+function isFixedWingVehicle(scenario, runConfig = null) {
+  const backendId = runConfig?.backend_id || scenario?.run_config?.backend_id || scenario?.vehicle?.backend_id;
+  return backendId === JSBSIM_CESSNA_BACKEND || scenario?.vehicle?.model_type === "fixed_wing";
+}
+
+function applyVehiclePresetForBackend(scenario, backendId) {
   if (!scenario) return;
   if (!scenario.vehicle || typeof scenario.vehicle !== "object") scenario.vehicle = {};
   const vehicle = scenario.vehicle;
   if (!vehicle.parameters || typeof vehicle.parameters !== "object") vehicle.parameters = {};
+  if (!vehicle.controller || typeof vehicle.controller !== "object") vehicle.controller = {};
+
+  vehicle.backend_id = backendId;
+  if (backendId === JSBSIM_CESSNA_BACKEND) {
+    vehicle.model_id = "jsbsim_c172";
+    vehicle.model_type = "fixed_wing";
+    vehicle.display_name = "JSBSim Cessna 172";
+    if (!vehicle.parameters.aircraft && !vehicle.parameters.aircraft_xml) vehicle.parameters.aircraft = "c172p";
+    if (!vehicle.parameters.altitude_reference) vehicle.parameters.altitude_reference = "agl";
+    if (!Number.isFinite(Number(vehicle.parameters.initial_ias_mps))) vehicle.parameters.initial_ias_mps = 40.0;
+    if (vehicle.parameters.engine_running === undefined) vehicle.parameters.engine_running = true;
+    if (!Number.isFinite(Number(vehicle.parameters.base_throttle))) vehicle.parameters.base_throttle = 0.65;
+    if (!vehicle.controller.type || vehicle.controller.type === "mpc") vehicle.controller.type = "waypoint_autopilot";
+    const cruise = Number(vehicle.controller.cruise_speed_mps);
+    if (!Number.isFinite(cruise) || cruise < 15 || cruise > 70) vehicle.controller.cruise_speed_mps = 40.0;
+    if (!Number.isFinite(Number(vehicle.controller.max_bank_deg))) vehicle.controller.max_bank_deg = 25.0;
+    if (!Number.isFinite(Number(vehicle.controller.base_throttle))) vehicle.controller.base_throttle = 0.65;
+    if (!Number.isFinite(Number(vehicle.controller.heading_gain))) vehicle.controller.heading_gain = 1.5;
+    if (!Number.isFinite(Number(vehicle.controller.altitude_gain))) vehicle.controller.altitude_gain = 0.012;
+    if (!Number.isFinite(Number(vehicle.controller.throttle_gain))) vehicle.controller.throttle_gain = 0.02;
+    if (!Number.isFinite(Number(vehicle.controller.waypoint_capture_radius_m))) {
+      vehicle.controller.waypoint_capture_radius_m = 75.0;
+    }
+    if (!Number.isFinite(Number(vehicle.controller.min_agl_m))) vehicle.controller.min_agl_m = 10.0;
+    if (!Number.isFinite(Number(vehicle.controller.max_sink_rate_mps))) vehicle.controller.max_sink_rate_mps = 5.0;
+    if (!Number.isFinite(Number(vehicle.controller.max_climb_deg))) vehicle.controller.max_climb_deg = 8.0;
+    if (!Number.isFinite(Number(vehicle.controller.elevator_trim))) vehicle.controller.elevator_trim = 0.0;
+    if (!scenario.run_config || typeof scenario.run_config !== "object") scenario.run_config = {};
+    const rc = scenario.run_config;
+    if (!Number.isFinite(Number(rc.dt_s)) || Number(rc.dt_s) > 0.1) rc.dt_s = 0.05;
+    if (!Number.isFinite(Number(rc.waypoint_threshold_m)) || Number(rc.waypoint_threshold_m) < 1) {
+      rc.waypoint_threshold_m = 50.0;
+    }
+    return;
+  }
+
+  if (vehicle.model_type === "fixed_wing" || !vehicle.model_type) {
+    vehicle.model_type = "quadcopter";
+  }
+  if (!vehicle.model_id || vehicle.model_id === "jsbsim_c172") {
+    vehicle.model_id = backendId === "pybullet_quad" ? "pybullet_quad" : "inhouse_mpc_quad";
+  }
+  if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172") {
+    vehicle.display_name = backendId === "pybullet_quad" ? "PyBullet / PyFlyt Quadcopter" : "In-house MPC Quadcopter";
+  }
+  if (!vehicle.controller.type || vehicle.controller.type === "waypoint_autopilot") vehicle.controller.type = "mpc";
+  if (!Number.isFinite(Number(vehicle.controller.horizon))) vehicle.controller.horizon = 20;
+  if (!Number.isFinite(Number(vehicle.controller.lookahead))) vehicle.controller.lookahead = 60;
+}
+
+function ensureVehicleObj(scenario) {
+  if (!scenario) return;
+  if (!scenario.vehicle || typeof scenario.vehicle !== "object") scenario.vehicle = {};
+  const backendId = scenario.run_config?.backend_id || scenario.vehicle.backend_id || "inhouse_mpc_quad";
+  applyVehiclePresetForBackend(scenario, backendId);
+  const vehicle = scenario.vehicle;
+  if (!vehicle.parameters || typeof vehicle.parameters !== "object") vehicle.parameters = {};
+  if (!vehicle.controller || typeof vehicle.controller !== "object") vehicle.controller = {};
+  if (isFixedWingVehicle(scenario)) return;
   const params = vehicle.parameters;
   if (!Number.isFinite(Number(params.mass))) params.mass = 5.0;
   if (!Number.isFinite(Number(params.Ix))) params.Ix = 1.0;

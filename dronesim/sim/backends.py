@@ -423,17 +423,15 @@ class DroneFactory:
         self._backends: dict[str, SimulationBackend] = {}
         if backends is None:
             # Import locally to avoid an import cycle with backends_pybullet
-            # (which imports SimulationBackend / BackendUnavailable from here).
+            # and backends_jsbsim (which import SimulationBackend /
+            # BackendUnavailable from here).
+            from dronesim.sim.backends_jsbsim import JSBSimCessnaBackend
             from dronesim.sim.backends_pybullet import PyBulletQuadBackend
 
             backends = [
                 InHouseMpcQuadBackend(),
                 PyBulletQuadBackend(),
-                PlaceholderBackend(
-                    "jsbsim_cessna",
-                    "JSBSim Cessna",
-                    "Install jsbsim and wire aircraft scripts/properties before enabling this backend.",
-                ),
+                JSBSimCessnaBackend(),
             ]
         for backend in backends:
             self.register(backend)
