@@ -1,0 +1,105 @@
+{
+  "version": "1",
+  "presets": {
+    "level_cruise_msl": {
+      "label": "Level cruise (MSL)",
+      "description": "Stable level flight at 500 m MSL; use when terrain map is optional. dt=0.05 s.",
+      "vehicle": {
+        "parameters": {
+          "altitude_reference": "msl",
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 50.0,
+          "heading_gain": 1.0,
+          "altitude_gain": 0.008,
+          "climb_rate_gain": 0.008,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.12,
+          "gamma_rate_limit_deg_s": 3.0,
+          "base_throttle": 0.68,
+          "throttle_gain": 0.018,
+          "elevator_trim": 0.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 10.0
+        }
+      },
+      "run_config": {
+        "dt_s": 0.05,
+        "max_steps": 800,
+        "waypoint_threshold_m": 80.0,
+        "target_altitude_m": 500.0
+      }
+    },
+    "gentle_agl": {
+      "label": "Gentle AGL patrol",
+      "description": "Low-gain altitude hold above terrain; requires built terrain map for AGL waypoints.",
+      "vehicle": {
+        "parameters": {
+          "altitude_reference": "agl",
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 20,
+          "ic_trim_steps": 20
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "max_bank_deg": 18.0,
+          "waypoint_capture_radius_m": 60.0,
+          "heading_gain": 1.2,
+          "altitude_gain": 0.006,
+          "climb_rate_gain": 0.006,
+          "climb_rate_limit_mps": 2.5,
+          "elevator_gain": 0.1,
+          "gamma_rate_limit_deg_s": 2.5,
+          "base_throttle": 0.65,
+          "throttle_gain": 0.02,
+          "max_climb_deg": 5.0,
+          "max_descent_deg": 5.0,
+          "min_agl_m": 30.0
+        }
+      },
+      "run_config": {
+        "dt_s": 0.05,
+        "max_steps": 600,
+        "waypoint_threshold_m": 60.0,
+        "target_altitude_m": 80.0
+      }
+    },
+    "test_harness": {
+      "label": "CI test harness",
+      "description": "Matches live JSBSim smoke-test flight profile (500 m MSL, short run).",
+      "vehicle": {
+        "parameters": {
+          "altitude_reference": "msl",
+          "ic_settle_steps": 10,
+          "auto_trim_elevator": true,
+          "ic_trim_steps": 16
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 50.0,
+          "heading_gain": 1.0,
+          "altitude_gain": 0.008,
+          "climb_rate_gain": 0.008,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.12
+        }
+      },
+      "run_config": {
+        "dt_s": 0.05,
+        "max_steps": 400,
+        "waypoint_threshold_m": 80.0,
+        "target_altitude_m": 500.0
+      }
+    }
+  }
+}

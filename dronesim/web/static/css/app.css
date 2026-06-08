@@ -696,6 +696,31 @@ textarea {
   box-shadow: var(--shadow-card);
 }
 
+.chart-card-wide {
+  grid-column: 1 / -1;
+  min-height: 440px;
+}
+
+.trajectory-3d-host {
+  position: relative;
+  width: 100%;
+  border-radius: calc(var(--radius) - 4px);
+  overflow: hidden;
+}
+
+.trajectory-wp-label {
+  color: var(--text-secondary);
+  font: 11px -apple-system, system-ui, sans-serif;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+
+.chart-title {
+  font: 600 12px -apple-system, system-ui, sans-serif;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
 .section-head {
   font-size: 19px;
   font-weight: 600;

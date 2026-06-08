@@ -13,7 +13,15 @@ from typing import Any, Callable
 
 import numpy as np
 
-from dronesim.models import RunConfig, RunResult, RunSummary, ScenarioSpec
+from dronesim.models import (
+    JSBSimVehicleParams,
+    RunConfig,
+    RunResult,
+    RunSummary,
+    ScenarioSpec,
+    WaypointAutopilotConfig,
+    validate_jsbsim_scenario,
+)
 from dronesim.services.terrain import MapCacheMiss, TerrainService, local_to_lat_lon, to_local_meters
 from dronesim.sim.backends import BackendUnavailable, SimulationBackend, StepProgressCb
 from dronesim.sim.debug_log import get_sim_logger
@@ -25,7 +33,13 @@ _FPS_PER_MPS = 3.280839895
 _KTS_PER_MPS = 1.943844492
 _M_PER_FT = 0.3048
 _MPS_PER_FPS = 0.3048
+_KG_PER_LB = 0.453592
 
+_FUEL_PROPERTY_CANDIDATES = (
+    "propulsion/tank/contents-lbs",
+    "propulsion/total-fuel-lbs",
+)
+_MAX_FUEL_TANKS = 8
 _CRUISE_SPEED_MIN_MPS = 15.0
 _CRUISE_SPEED_MAX_MPS = 70.0
 _DEFAULT_CAPTURE_RADIUS_M = 75.0
@@ -33,6 +47,11 @@ _DEFAULT_MIN_AGL_M = 10.0
 _DEFAULT_MAX_SINK_MPS = 5.0
 _DEFAULT_MAX_CLIMB_DEG = 8.0
 _DEFAULT_MAX_DESCENT_DEG = 8.0
+_DEFAULT_CLIMB_RATE_LIMIT_MPS = 4.0
+_DEFAULT_ELEVATOR_GAIN = 0.12
+_DEFAULT_GAMMA_RATE_LIMIT_DEG_S = 4.0
+_DEFAULT_IC_TRIM_STEPS = 24
+_DEFAULT_SPAWN_AGL_MARGIN_M = 5.0
 _IC_SETTLE_STEPS = 30
 
 _INSTALL_HINT = (
@@ -116,6 +135,30 @@ def _resolve_waypoints_3d(
     return resolved, altitude_ref, warnings
 
 
+def _enforce_min_waypoint_altitude(
+    waypoints: list[tuple[float, float, float]],
+    *,
+    terrain_at: Callable[[float, float], float] | None,
+    min_agl_m: float,
+    margin_m: float = _DEFAULT_SPAWN_AGL_MARGIN_M,
+) -> tuple[list[tuple[float, float, float]], list[str]]:
+    """Raise waypoint MSL altitudes so spawn points clear terrain + min AGL."""
+    if terrain_at is None or not waypoints:
+        return waypoints, []
+    warnings: list[str] = []
+    adjusted: list[tuple[float, float, float]] = []
+    for x_m, y_m, z_msl in waypoints:
+        floor_msl = terrain_at(float(x_m), float(y_m)) + min_agl_m + margin_m
+        if z_msl < floor_msl:
+            warnings.append(
+                f"Waypoint ({x_m:.0f}, {y_m:.0f}) altitude raised from {z_msl:.1f} m "
+                f"to {floor_msl:.1f} m MSL (min AGL {min_agl_m:.1f} m + {margin_m:.1f} m margin)"
+            )
+            z_msl = floor_msl
+        adjusted.append((x_m, y_m, z_msl))
+    return adjusted, warnings
+
+
 def _resolve_terrain_elevation_fn(
     scenario: ScenarioSpec,
     terrain_service: TerrainService,
@@ -183,6 +226,34 @@ def _state_is_finite(pos: list[float], vel: list[float], att: list[float]) -> bo
     return True
 
 
+def _initial_flight_path_deg(
+    waypoints: list[tuple[float, float, float]],
+    params: dict[str, Any],
+) -> float:
+    override = params.get("initial_flight_path_deg")
+    if override not in (None, ""):
+        return float(override)
+    if len(waypoints) < 2:
+        return 0.0
+    x0, y0, z0 = waypoints[0]
+    x1, y1, z1 = waypoints[1]
+    horiz = math.hypot(x1 - x0, y1 - y0)
+    if horiz < 1.0:
+        return 0.0
+    return math.degrees(math.atan2(z1 - z0, horiz))
+
+
+def _resolve_autopilot_config(
+    controller: dict[str, Any],
+    params: dict[str, Any],
+) -> WaypointAutopilotConfig:
+    merged = dict(controller)
+    for key in ("base_throttle", "elevator_trim", "max_bank_deg", "cruise_speed_mps"):
+        if key not in merged and key in params:
+            merged[key] = params[key]
+    return WaypointAutopilotConfig.from_dict(merged)
+
+
 class JSBSimCessnaBackend(SimulationBackend):
     """JSBSim C172/Cessna adapter for waypoint-driven fixed-wing simulation."""
 
@@ -233,33 +304,60 @@ class JSBSimCessnaBackend(SimulationBackend):
         jsbsim = importlib.import_module("jsbsim")
         params = scenario.vehicle.parameters or {}
         controller = scenario.vehicle.controller or {}
+        vehicle_params = JSBSimVehicleParams.from_dict(params)
+        ap_cfg = _resolve_autopilot_config(controller, params)
+        pitch_gain = ap_cfg.resolved_pitch_gain()
         waypoints, altitude_ref, altitude_warnings = _resolve_waypoints_3d(
             scenario, cfg, self.terrain_service, params
         )
-        aircraft = str(params.get("aircraft", params.get("aircraft_xml", "c172p")))
+        terrain_at, terrain_offset_m = _resolve_terrain_elevation_fn(scenario, self.terrain_service)
+        aircraft = vehicle_params.aircraft
         dt_s = float(cfg.dt_s)
         max_steps = int(cfg.max_steps)
         success_threshold = float(cfg.waypoint_threshold_m)
 
-        cruise_raw = float(controller.get("cruise_speed_mps", params.get("cruise_speed_mps", 40.0)))
-        cruise_speed_mps, cruise_clamped = _clamp_cruise_speed(cruise_raw)
-        heading_gain = float(controller.get("heading_gain", 1.5))
-        altitude_gain = float(controller.get("altitude_gain", 0.012))
-        pitch_gain = float(controller.get("pitch_gain", altitude_gain * 80.0))
-        throttle_gain = float(controller.get("throttle_gain", 0.02))
-        base_throttle = float(controller.get("base_throttle", params.get("base_throttle", 0.65)))
-        max_bank_deg = float(controller.get("max_bank_deg", params.get("max_bank_deg", 25.0)))
-        elevator_trim = float(controller.get("elevator_trim", params.get("elevator_trim", 0.0)))
-        capture_radius_m = float(
-            controller.get("waypoint_capture_radius_m", _DEFAULT_CAPTURE_RADIUS_M)
+        cruise_raw = float(
+            controller.get("cruise_speed_mps", params.get("cruise_speed_mps", ap_cfg.cruise_speed_mps))
         )
-        min_agl_m = float(controller.get("min_agl_m", _DEFAULT_MIN_AGL_M))
-        max_sink_mps = float(controller.get("max_sink_rate_mps", _DEFAULT_MAX_SINK_MPS))
-        max_climb_deg = float(controller.get("max_climb_deg", _DEFAULT_MAX_CLIMB_DEG))
-        max_descent_deg = float(controller.get("max_descent_deg", _DEFAULT_MAX_DESCENT_DEG))
-        ic_settle_steps = int(params.get("ic_settle_steps", _IC_SETTLE_STEPS))
+        cruise_speed_mps, cruise_clamped = _clamp_cruise_speed(cruise_raw)
+        ap_cfg.cruise_speed_mps = cruise_speed_mps
+        initial_ias_mps = float(
+            vehicle_params.initial_ias_mps
+            if vehicle_params.initial_ias_mps is not None
+            else cruise_speed_mps
+        )
+        heading_gain = ap_cfg.heading_gain
+        climb_rate_gain = ap_cfg.resolved_climb_rate_gain()
+        climb_rate_limit_mps = ap_cfg.climb_rate_limit_mps
+        elevator_gain = ap_cfg.elevator_gain
+        gamma_rate_limit_deg_s = ap_cfg.gamma_rate_limit_deg_s
+        throttle_gain = ap_cfg.throttle_gain
+        base_throttle = ap_cfg.base_throttle
+        max_bank_deg = ap_cfg.max_bank_deg
+        elevator_trim = ap_cfg.elevator_trim
+        capture_radius_m = ap_cfg.waypoint_capture_radius_m
+        min_agl_m = ap_cfg.min_agl_m
+        max_sink_mps = ap_cfg.max_sink_rate_mps
+        max_climb_deg = ap_cfg.max_climb_deg
+        max_descent_deg = ap_cfg.max_descent_deg
+        elevator_sign = float(
+            controller.get("elevator_sign", vehicle_params.elevator_sign)
+        )
+        ic_settle_steps = vehicle_params.ic_settle_steps
+        config_warnings = validate_jsbsim_scenario(
+            scenario,
+            altitude_ref=altitude_ref,
+            cruise_speed_mps=cruise_speed_mps,
+            initial_ias_mps=initial_ias_mps,
+            dt_s=dt_s,
+        )
 
-        terrain_at, terrain_offset_m = _resolve_terrain_elevation_fn(scenario, self.terrain_service)
+        spawn_warnings: list[str] = []
+        waypoints, spawn_warnings = _enforce_min_waypoint_altitude(
+            waypoints,
+            terrain_at=terrain_at,
+            min_agl_m=min_agl_m,
+        )
         terrain_collision = bool(getattr(scenario.environment, "terrain_collision_enabled", False))
 
         logger.info(
@@ -284,13 +382,29 @@ class JSBSimCessnaBackend(SimulationBackend):
             cruise_speed_mps,
             params,
             base_throttle=base_throttle,
+            initial_ias_mps=initial_ias_mps,
         )
         self._set_environment(fdm, scenario)
         if not self._call_bool(fdm.run_ic):
             raise RuntimeError(f"JSBSim failed to initialize aircraft model '{aircraft}'")
 
         self._start_engine(fdm, params, base_throttle)
-        self._run_ic_settle(fdm, base_throttle, ic_settle_steps)
+        elevator_trim = self._trim_elevator_at_ic(
+            fdm,
+            scenario=scenario,
+            waypoints=waypoints,
+            cruise_speed_mps=cruise_speed_mps,
+            params=params,
+            vehicle_params=vehicle_params,
+            base_throttle=base_throttle,
+            initial_ias_mps=initial_ias_mps,
+            elevator_trim=elevator_trim,
+            ic_settle_steps=ic_settle_steps,
+        )
+        ap_cfg.elevator_trim = elevator_trim
+
+        fuel_property = self._detect_fuel_property(fdm)
+        fuel_kg: list[float] = []
 
         time_s: list[float] = []
         position_m: list[list[float]] = []
@@ -329,6 +443,10 @@ class JSBSimCessnaBackend(SimulationBackend):
                 cruise_speed_mps=cruise_speed_mps,
                 heading_gain=heading_gain,
                 pitch_gain=pitch_gain,
+                climb_rate_gain=climb_rate_gain,
+                climb_rate_limit_mps=climb_rate_limit_mps,
+                elevator_gain=elevator_gain,
+                elevator_sign=elevator_sign,
                 max_bank_rad=max_bank_rad,
                 elevator_trim=elevator_trim,
                 base_throttle=base_throttle,
@@ -340,6 +458,7 @@ class JSBSimCessnaBackend(SimulationBackend):
                 min_agl_m=min_agl_m,
                 terrain_at=terrain_at,
                 commanded_gamma_deg=commanded_gamma_deg,
+                gamma_rate_limit_deg_s=gamma_rate_limit_deg_s,
                 dt_s=dt_s,
             )
 
@@ -366,6 +485,7 @@ class JSBSimCessnaBackend(SimulationBackend):
                 angular_rate_rad_s.append(rates)
                 controls.append([aileron, elevator, rudder, throttle])
                 reference_position_m.append([target[0], target[1], target[2]])
+                self._append_fuel_sample(fdm, fuel_property, fuel_kg)
                 break
 
             if terrain_at is not None and agl_m < min_agl_m * 0.5:
@@ -377,6 +497,7 @@ class JSBSimCessnaBackend(SimulationBackend):
                 angular_rate_rad_s.append(rates)
                 controls.append([aileron, elevator, rudder, throttle])
                 reference_position_m.append([target[0], target[1], target[2]])
+                self._append_fuel_sample(fdm, fuel_property, fuel_kg)
                 break
 
             time_s.append(sample_t)
@@ -386,6 +507,7 @@ class JSBSimCessnaBackend(SimulationBackend):
             angular_rate_rad_s.append(rates)
             controls.append([aileron, elevator, rudder, throttle])
             reference_position_m.append([target[0], target[1], target[2]])
+            self._append_fuel_sample(fdm, fuel_property, fuel_kg)
 
             if on_step_progress is not None:
                 try:
@@ -437,14 +559,28 @@ class JSBSimCessnaBackend(SimulationBackend):
                 "cruise_speed_mps": cruise_speed_mps,
                 "max_bank_deg": max_bank_deg,
                 "waypoint_capture_radius_m": capture_radius_m,
+                "climb_rate_gain": climb_rate_gain,
+                "elevator_trim": elevator_trim,
             },
             "coordinate_frame": "local_enu_meters_from_map_center",
         }
         if cruise_clamped:
             metadata["cruise_speed_clamped"] = True
             metadata["cruise_speed_requested_mps"] = cruise_raw
+        all_warnings = list(altitude_warnings) + list(spawn_warnings) + list(config_warnings)
+        if all_warnings:
+            metadata["config_warnings"] = all_warnings
+        if spawn_warnings:
+            metadata["spawn_altitude_warnings"] = spawn_warnings
         if altitude_warnings:
             metadata["altitude_warnings"] = altitude_warnings
+        if fuel_kg:
+            metadata["fuel_units"] = "kg"
+            metadata["fuel_property"] = (
+                fuel_property
+                if fuel_property != "__indexed_tanks__"
+                else "propulsion/tank[*]/contents-lbs"
+            )
         version = getattr(jsbsim, "__version__", None)
         if version is not None:
             metadata["jsbsim_version"] = str(version)
@@ -475,9 +611,50 @@ class JSBSimCessnaBackend(SimulationBackend):
             controls=controls,
             reference_position_m=reference_position_m,
             tracking_error_m=tracking_error.tolist(),
+            fuel_kg=fuel_kg,
             summary=summary,
             metadata=metadata,
         )
+
+    def _detect_fuel_property(self, fdm) -> str | None:
+        for name in _FUEL_PROPERTY_CANDIDATES:
+            lbs = self._get_prop(fdm, name, fallback=float("nan"))
+            if math.isfinite(lbs) and lbs > 0.0:
+                return name
+        total_lbs = 0.0
+        found = False
+        for idx in range(_MAX_FUEL_TANKS):
+            lbs = self._get_prop(fdm, f"propulsion/tank[{idx}]/contents-lbs", fallback=float("nan"))
+            if not math.isfinite(lbs):
+                break
+            total_lbs += max(0.0, lbs)
+            found = True
+        if found and total_lbs > 0.0:
+            return "__indexed_tanks__"
+        return None
+
+    def _read_fuel_kg(self, fdm, fuel_property: str | None) -> float | None:
+        if fuel_property is None:
+            return None
+        if fuel_property == "__indexed_tanks__":
+            total_lbs = 0.0
+            for idx in range(_MAX_FUEL_TANKS):
+                lbs = self._get_prop(fdm, f"propulsion/tank[{idx}]/contents-lbs", fallback=float("nan"))
+                if not math.isfinite(lbs):
+                    break
+                total_lbs += max(0.0, lbs)
+            return total_lbs * _KG_PER_LB
+        lbs = self._get_prop(fdm, fuel_property, fallback=float("nan"))
+        if not math.isfinite(lbs):
+            return None
+        return lbs * _KG_PER_LB
+
+    def _append_fuel_sample(self, fdm, fuel_property: str | None, fuel_kg: list[float]) -> None:
+        if fuel_property is None:
+            return
+        sample = self._read_fuel_kg(fdm, fuel_property)
+        if sample is not None:
+            fuel_kg.append(sample)
 
     def _compute_autopilot(
         self,
@@ -490,6 +667,10 @@ class JSBSimCessnaBackend(SimulationBackend):
         cruise_speed_mps: float,
         heading_gain: float,
         pitch_gain: float,
+        climb_rate_gain: float,
+        climb_rate_limit_mps: float,
+        elevator_gain: float,
+        elevator_sign: float,
         max_bank_rad: float,
         elevator_trim: float,
         base_throttle: float,
@@ -501,6 +682,7 @@ class JSBSimCessnaBackend(SimulationBackend):
         min_agl_m: float,
         terrain_at: Callable[[float, float], float] | None,
         commanded_gamma_deg: float,
+        gamma_rate_limit_deg_s: float,
         dt_s: float,
     ) -> tuple[float, float, float, float, float]:
         roll, pitch, yaw = att[0], att[1], att[2]
@@ -533,19 +715,98 @@ class JSBSimCessnaBackend(SimulationBackend):
         elif pitch > math.radians(18.0):
             gamma_target_deg = min(gamma_target_deg, -max_descent_deg * 0.5)
 
-        gamma_rate_limit = 4.0 * dt_s
+        gamma_rate_limit = gamma_rate_limit_deg_s * dt_s
         commanded_gamma_deg += _clamp(
             gamma_target_deg - commanded_gamma_deg,
             -gamma_rate_limit,
             gamma_rate_limit,
         )
-        elevator = _clamp(
-            elevator_trim + commanded_gamma_deg / max(max_climb_deg, 1.0),
-            -1.0,
-            1.0,
+        # JSBSim c172 FCS: negative elevator-cmd-norm = nose up (climb).
+        gamma_elevator = -commanded_gamma_deg / max(max_climb_deg, 1.0)
+        climb_rate_target_mps = _clamp(
+            climb_rate_gain * altitude_error,
+            -climb_rate_limit_mps,
+            climb_rate_limit_mps,
         )
+        rate_elevator = (
+            elevator_sign
+            * elevator_gain
+            * 0.35
+            * (climb_rate_target_mps - vel[2])
+        )
+        elevator = _clamp(elevator_trim + gamma_elevator + rate_elevator, -1.0, 1.0)
         throttle = _clamp(base_throttle + throttle_gain * (cruise_speed_mps - speed_mps), 0.0, 1.0)
         return aileron, rudder, elevator, throttle, commanded_gamma_deg
+
+    def _trim_elevator_at_ic(
+        self,
+        fdm,
+        *,
+        scenario: ScenarioSpec,
+        waypoints: list[tuple[float, float, float]],
+        cruise_speed_mps: float,
+        params: dict[str, Any],
+        vehicle_params: JSBSimVehicleParams,
+        base_throttle: float,
+        initial_ias_mps: float,
+        elevator_trim: float,
+        ic_settle_steps: int,
+    ) -> float:
+        """Settle IC and optionally search elevator trim for near-zero vertical speed."""
+        if not vehicle_params.auto_trim_elevator:
+            self._run_ic_settle(fdm, base_throttle, ic_settle_steps, elevator_trim)
+            return elevator_trim
+
+        trim_iters = max(int(vehicle_params.ic_trim_steps), 4)
+        settle_steps = max(min(ic_settle_steps, 8), 2)
+        candidates = [
+            -0.25,
+            -0.15,
+            -0.08,
+            0.0,
+            0.08,
+            0.15,
+            0.25,
+        ]
+        best_elev = elevator_trim
+        best_vd = float("inf")
+        for elev in candidates:
+            self._set_initial_conditions(
+                fdm,
+                scenario,
+                waypoints,
+                cruise_speed_mps,
+                params,
+                base_throttle=base_throttle,
+                initial_ias_mps=initial_ias_mps,
+            )
+            self._call_bool(fdm.run_ic)
+            self._start_engine(fdm, params, base_throttle)
+            self._run_ic_settle(fdm, base_throttle, settle_steps, elev)
+            vd_fps = abs(self._get_prop(fdm, "velocities/v-down-fps", 0.0))
+            if vd_fps < best_vd:
+                best_vd = vd_fps
+                best_elev = elev
+
+        self._set_initial_conditions(
+            fdm,
+            scenario,
+            waypoints,
+            cruise_speed_mps,
+            params,
+            base_throttle=base_throttle,
+            initial_ias_mps=initial_ias_mps,
+        )
+        self._call_bool(fdm.run_ic)
+        self._start_engine(fdm, params, base_throttle)
+        self._run_ic_settle(fdm, base_throttle, ic_settle_steps, best_elev)
+        logger.debug(
+            "JSBSim IC elevator trim=%.4f v-down-fps=%.3f (candidates=%d)",
+            best_elev,
+            best_vd,
+            trim_iters,
+        )
+        return best_elev
 
     @staticmethod
     def _agl_m(pos: list[float], terrain_at: Callable[[float, float], float] | None) -> float:
@@ -621,25 +882,25 @@ class JSBSimCessnaBackend(SimulationBackend):
         params: dict[str, Any],
         *,
         base_throttle: float,
+        initial_ias_mps: float,
     ) -> None:
+        vehicle = JSBSimVehicleParams.from_dict(params)
         x0, y0, z0 = waypoints[0]
         lat0, lon0 = local_to_lat_lon(x0, y0, scenario.map.center_lat, scenario.map.center_lon)
         heading = math.degrees(_bearing_rad(waypoints[0][:2], waypoints[1][:2], 0.0))
-        heading_override = params.get("initial_heading_deg")
-        if heading_override not in (None, ""):
-            heading = float(heading_override)
-        initial_speed = float(params.get("initial_ias_mps", cruise_speed_mps))
-        flap_cmd = float(params.get("flap_cmd_norm", 0.0))
+        if vehicle.initial_heading_deg is not None:
+            heading = vehicle.initial_heading_deg
+        gamma_deg = _initial_flight_path_deg(waypoints, params)
 
         self._set_prop(fdm, "ic/lat-gc-deg", float(lat0))
         self._set_prop(fdm, "ic/long-gc-deg", float(lon0))
         self._set_prop(fdm, "ic/h-sl-ft", float(z0) * _FT_PER_M)
-        self._set_prop(fdm, "ic/vc-kts", initial_speed * _KTS_PER_MPS)
+        self._set_prop(fdm, "ic/vc-kts", initial_ias_mps * _KTS_PER_MPS)
         self._set_prop(fdm, "ic/psi-true-deg", heading)
-        self._set_prop(fdm, "ic/gamma-deg", float(params.get("initial_flight_path_deg", 0.0)))
-        self._set_prop(fdm, "ic/theta-deg", float(params.get("initial_pitch_deg", 0.0)))
-        self._set_prop(fdm, "ic/phi-deg", float(params.get("initial_roll_deg", 0.0)))
-        self._set_prop(fdm, "fcs/flap-cmd-norm", flap_cmd)
+        self._set_prop(fdm, "ic/gamma-deg", gamma_deg)
+        self._set_prop(fdm, "ic/theta-deg", vehicle.initial_pitch_deg)
+        self._set_prop(fdm, "ic/phi-deg", vehicle.initial_roll_deg)
+        self._set_prop(fdm, "fcs/flap-cmd-norm", vehicle.flap_cmd_norm)
         self._set_controls(fdm, aileron=0.0, elevator=0.0, rudder=0.0, throttle=base_throttle)
 
     def _start_engine(self, fdm, params: dict[str, Any], base_throttle: float) -> None:
@@ -652,9 +913,21 @@ class JSBSimCessnaBackend(SimulationBackend):
                 pass
         self._set_controls(fdm, aileron=0.0, elevator=0.0, rudder=0.0, throttle=base_throttle)
 
-    def _run_ic_settle(self, fdm, base_throttle: float, steps: int) -> None:
+    def _run_ic_settle(
+        self,
+        fdm,
+        base_throttle: float,
+        steps: int,
+        elevator: float = 0.0,
+    ) -> None:
         for _ in range(max(steps, 0)):
-            self._set_controls(fdm, aileron=0.0, elevator=0.0, rudder=0.0, throttle=base_throttle)
+            self._set_controls(
+                fdm,
+                aileron=0.0,
+                elevator=elevator,
+                rudder=0.0,
+                throttle=base_throttle,
+            )
             fdm.run()
 
     def _set_environment(self, fdm, scenario: ScenarioSpec) -> None:

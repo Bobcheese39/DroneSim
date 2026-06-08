@@ -67,6 +67,29 @@ class WebApiTest(unittest.TestCase):
         self.assertIn("inhouse_mpc_quad", ids)
         self.assertIn("jsbsim_cessna", ids)
 
+    def test_jsbsim_presets_list_and_apply(self) -> None:
+        listed = self.client.get("/api/jsbsim/presets").json()
+        ids = {p["id"] for p in listed["presets"]}
+        self.assertIn("level_cruise_msl", ids)
+        merged = self.client.post(
+            "/api/jsbsim/apply-preset",
+            json={"scenario": _demo_scenario_dict(), "preset_id": "test_harness"},
+        ).json()
+        self.assertEqual(merged["run_config"]["dt_s"], 0.05)
+        self.assertEqual(merged["metadata"]["jsbsim_preset"], "test_harness")
+
+    def test_jsbsim_aircraft_list_and_apply(self) -> None:
+        listed = self.client.get("/api/jsbsim/aircraft").json()
+        ids = {a["id"] for a in listed["aircraft"]}
+        self.assertIn("c172p", ids)
+        self.assertIn("ov10", ids)
+        merged = self.client.post(
+            "/api/jsbsim/apply-aircraft",
+            json={"scenario": _demo_scenario_dict(), "aircraft_id": "pa28"},
+        ).json()
+        self.assertEqual(merged["vehicle"]["parameters"]["aircraft"], "pa28")
+        self.assertEqual(merged["metadata"]["jsbsim_aircraft"], "pa28")
+
     # -- scenario CRUD + validate --------------------------------------
     def test_validate_and_save_and_list(self) -> None:
         d = _demo_scenario_dict()
@@ -195,6 +218,30 @@ class WebApiTest(unittest.TestCase):
         self.assertEqual(len(analysis["error_decomposition"]["ex"]), 3)
         self.assertTrue(any(row["metric"] == "miss_distance_m" for row in analysis["summary"]))
         self.assertEqual(body["center"]["lat"], 37.0)
+        self.assertIn("trajectory", analysis)
+        self.assertEqual(len(analysis["trajectory"]["position_m"]), 3)
+        self.assertIsNone(analysis["fuel_kg"])
+        self.assertIsNone(analysis["battery_soc_pct"])
+
+    def test_analysis_block_fuel_and_waypoints(self) -> None:
+        from dronesim.web import analysis as analysis_mod
+
+        run = RunResult(
+            run_id="run_fuel",
+            scenario_id="scenario_x",
+            backend_id="jsbsim_cessna",
+            model_id="jsbsim_c172",
+            status="success",
+            time_s=[0.0, 0.1, 0.2],
+            position_m=[[0, 0, 5], [1, 0, 5], [2, 0, 5]],
+            reference_position_m=[[0, 0, 5], [1, 0, 5], [2, 0, 5]],
+            fuel_kg=[50.0, 49.5, 49.0],
+            metadata={"waypoints_local_xyz": [[0, 0, 5], [10, 0, 5]]},
+        )
+        block = analysis_mod.analysis_block(run)
+        self.assertEqual(block["fuel_kg"], [50.0, 49.5, 49.0])
+        self.assertIsNone(block["battery_soc_pct"])
+        self.assertEqual(block["trajectory"]["waypoints_m"], [[0.0, 0.0, 5.0], [10.0, 0.0, 5.0]])
 
     def test_mc_analysis_endpoint(self) -> None:
         d = _demo_scenario_dict()

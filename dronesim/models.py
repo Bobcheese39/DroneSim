@@ -197,6 +197,202 @@ class DroneModelSpec:
 
 
 @dataclass
+class JSBSimVehicleParams:
+    """Typed JSBSim vehicle parameters (merged with ``vehicle.parameters`` dict)."""
+
+    aircraft: str = "c172p"
+    altitude_reference: str = "agl"
+    initial_ias_mps: float | None = None
+    initial_heading_deg: float | None = None
+    initial_flight_path_deg: float | None = None
+    initial_pitch_deg: float = 0.0
+    initial_roll_deg: float = 0.0
+    flap_cmd_norm: float = 0.0
+    engine_running: bool = True
+    base_throttle: float = 0.65
+    jsbsim_root: str | None = None
+    aircraft_path: str | None = None
+    engine_path: str | None = None
+    systems_path: str | None = None
+    ic_settle_steps: int = 30
+    ic_trim_steps: int = 24
+    auto_trim_elevator: bool = False
+    elevator_sign: float = -1.0
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "JSBSimVehicleParams":
+        data = dict(payload or {})
+        engine_running = data.get("engine_running", True)
+        if isinstance(engine_running, str):
+            engine_running = str(engine_running).strip().lower() in ("1", "true", "yes", "on")
+        auto_trim = data.get("auto_trim_elevator", data.get("auto_trim", False))
+        if isinstance(auto_trim, str):
+            auto_trim = str(auto_trim).strip().lower() in ("1", "true", "yes", "on")
+        return cls(
+            aircraft=str(data.get("aircraft", data.get("aircraft_xml", "c172p"))),
+            altitude_reference=str(data.get("altitude_reference", "agl")),
+            initial_ias_mps=_optional_float(data.get("initial_ias_mps")),
+            initial_heading_deg=_optional_float(data.get("initial_heading_deg")),
+            initial_flight_path_deg=_optional_float(data.get("initial_flight_path_deg")),
+            initial_pitch_deg=float(data.get("initial_pitch_deg", 0.0)),
+            initial_roll_deg=float(data.get("initial_roll_deg", 0.0)),
+            flap_cmd_norm=float(data.get("flap_cmd_norm", 0.0)),
+            engine_running=bool(engine_running),
+            base_throttle=float(data.get("base_throttle", 0.65)),
+            jsbsim_root=data.get("jsbsim_root") or None,
+            aircraft_path=data.get("aircraft_path") or None,
+            engine_path=data.get("engine_path") or None,
+            systems_path=data.get("systems_path") or None,
+            ic_settle_steps=int(data.get("ic_settle_steps", 30)),
+            ic_trim_steps=int(data.get("ic_trim_steps", 24)),
+            auto_trim_elevator=bool(auto_trim),
+            elevator_sign=float(data.get("elevator_sign", -1.0)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "aircraft": self.aircraft,
+            "altitude_reference": self.altitude_reference,
+            "initial_pitch_deg": self.initial_pitch_deg,
+            "initial_roll_deg": self.initial_roll_deg,
+            "flap_cmd_norm": self.flap_cmd_norm,
+            "engine_running": self.engine_running,
+            "base_throttle": self.base_throttle,
+            "ic_settle_steps": self.ic_settle_steps,
+            "ic_trim_steps": self.ic_trim_steps,
+            "auto_trim_elevator": self.auto_trim_elevator,
+            "elevator_sign": self.elevator_sign,
+        }
+        if self.initial_ias_mps is not None:
+            out["initial_ias_mps"] = self.initial_ias_mps
+        if self.initial_heading_deg is not None:
+            out["initial_heading_deg"] = self.initial_heading_deg
+        if self.initial_flight_path_deg is not None:
+            out["initial_flight_path_deg"] = self.initial_flight_path_deg
+        if self.jsbsim_root:
+            out["jsbsim_root"] = self.jsbsim_root
+        if self.aircraft_path:
+            out["aircraft_path"] = self.aircraft_path
+        if self.engine_path:
+            out["engine_path"] = self.engine_path
+        if self.systems_path:
+            out["systems_path"] = self.systems_path
+        return out
+
+
+@dataclass
+class WaypointAutopilotConfig:
+    """Typed waypoint autopilot gains for JSBSim Cessna."""
+
+    type: str = "waypoint_autopilot"
+    cruise_speed_mps: float = 40.0
+    heading_gain: float = 1.5
+    altitude_gain: float = 0.012
+    climb_rate_gain: float | None = None
+    climb_rate_limit_mps: float = 4.0
+    elevator_gain: float = 0.12
+    gamma_rate_limit_deg_s: float = 4.0
+    pitch_gain: float | None = None
+    pitch_gain_override: bool = False
+    throttle_gain: float = 0.02
+    base_throttle: float = 0.65
+    max_bank_deg: float = 25.0
+    elevator_trim: float = 0.0
+    waypoint_capture_radius_m: float = 75.0
+    min_agl_m: float = 10.0
+    max_sink_rate_mps: float = 5.0
+    max_climb_deg: float = 8.0
+    max_descent_deg: float = 8.0
+    elevator_sign: float = -1.0
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "WaypointAutopilotConfig":
+        data = dict(payload or {})
+        altitude_gain = float(data.get("altitude_gain", 0.012))
+        pitch_override = data.get("pitch_gain_override", False)
+        if isinstance(pitch_override, str):
+            pitch_override = str(pitch_override).strip().lower() in ("1", "true", "yes", "on")
+        climb_rate_gain = data.get("climb_rate_gain")
+        pitch_gain = data.get("pitch_gain")
+        return cls(
+            type=str(data.get("type", "waypoint_autopilot")),
+            cruise_speed_mps=float(data.get("cruise_speed_mps", 40.0)),
+            heading_gain=float(data.get("heading_gain", 1.5)),
+            altitude_gain=altitude_gain,
+            climb_rate_gain=float(climb_rate_gain) if climb_rate_gain is not None else None,
+            climb_rate_limit_mps=float(data.get("climb_rate_limit_mps", 4.0)),
+            elevator_gain=float(data.get("elevator_gain", 0.12)),
+            gamma_rate_limit_deg_s=float(data.get("gamma_rate_limit_deg_s", 4.0)),
+            pitch_gain=float(pitch_gain) if pitch_gain is not None else None,
+            pitch_gain_override=bool(pitch_override),
+            throttle_gain=float(data.get("throttle_gain", 0.02)),
+            base_throttle=float(data.get("base_throttle", 0.65)),
+            max_bank_deg=float(data.get("max_bank_deg", 25.0)),
+            elevator_trim=float(data.get("elevator_trim", 0.0)),
+            waypoint_capture_radius_m=float(data.get("waypoint_capture_radius_m", 75.0)),
+            min_agl_m=float(data.get("min_agl_m", 10.0)),
+            max_sink_rate_mps=float(data.get("max_sink_rate_mps", 5.0)),
+            max_climb_deg=float(data.get("max_climb_deg", 8.0)),
+            max_descent_deg=float(data.get("max_descent_deg", 8.0)),
+            elevator_sign=float(data.get("elevator_sign", -1.0)),
+        )
+
+    def resolved_climb_rate_gain(self) -> float:
+        return self.climb_rate_gain if self.climb_rate_gain is not None else self.altitude_gain
+
+    def resolved_pitch_gain(self) -> float:
+        if self.pitch_gain_override and self.pitch_gain is not None:
+            return self.pitch_gain
+        return self.altitude_gain * 80.0
+
+    def to_dict(self) -> dict[str, Any]:
+        out = _json_ready(self)
+        if self.climb_rate_gain is None:
+            out.pop("climb_rate_gain", None)
+        if not self.pitch_gain_override:
+            out.pop("pitch_gain_override", None)
+            out.pop("pitch_gain", None)
+        return out
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def validate_jsbsim_scenario(
+    scenario: "ScenarioSpec",
+    *,
+    altitude_ref: str,
+    cruise_speed_mps: float,
+    initial_ias_mps: float,
+    dt_s: float,
+) -> list[str]:
+    """Return non-fatal configuration warnings for JSBSim Cessna runs."""
+    warnings: list[str] = []
+    params = JSBSimVehicleParams.from_dict(scenario.vehicle.parameters)
+    if altitude_ref == "agl":
+        warnings.append(
+            "altitude_reference=agl requires a built terrain map for correct MSL conversion"
+        )
+    if abs(initial_ias_mps - cruise_speed_mps) > 5.0:
+        warnings.append(
+            f"initial_ias_mps ({initial_ias_mps:.1f}) differs from cruise_speed_mps "
+            f"({cruise_speed_mps:.1f}); consider matching for stable trim"
+        )
+    if dt_s > 0.05:
+        warnings.append(
+            f"run_config.dt_s={dt_s:.3f} may be large for fixed-wing JSBSim; 0.05 or smaller is recommended"
+        )
+    if scenario.run_config.max_steps < 100:
+        warnings.append("run_config.max_steps is very low for fixed-wing transit")
+    if params.altitude_reference == "agl" and altitude_ref == "msl":
+        pass  # already downgraded in backend
+    return warnings
+
+
+@dataclass
 class EnvironmentSpec:
     gravity_mps2: float = 9.80665
     wind_mps: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -340,6 +536,8 @@ class RunResult:
     controls: list[list[float]] = field(default_factory=list)
     reference_position_m: list[list[float]] = field(default_factory=list)
     tracking_error_m: list[float] = field(default_factory=list)
+    fuel_kg: list[float] = field(default_factory=list)
+    battery_soc_pct: list[float] = field(default_factory=list)
     summary: RunSummary = field(default_factory=RunSummary)
     units: dict[str, str] = field(default_factory=lambda: {
         "time_s": "s",
@@ -351,6 +549,8 @@ class RunResult:
         "controls": "backend-specific SI units",
         "reference_position_m": "m",
         "tracking_error_m": "m",
+        "fuel_kg": "kg",
+        "battery_soc_pct": "%",
     })
     metadata: dict[str, Any] = field(default_factory=dict)
     created_utc: str = field(default_factory=utc_now)
@@ -376,6 +576,8 @@ class RunResult:
             controls=payload.get("controls", []),
             reference_position_m=payload.get("reference_position_m", []),
             tracking_error_m=payload.get("tracking_error_m", []),
+            fuel_kg=payload.get("fuel_kg", []),
+            battery_soc_pct=payload.get("battery_soc_pct", []),
             summary=RunSummary(**summary_payload),
             units=payload.get("units", {}),
             metadata=payload.get("metadata", {}),
@@ -392,7 +594,7 @@ class RunResult:
             ref = self.reference_position_m[i] if i < len(self.reference_position_m) else [None, None, None]
             ctrl = self.controls[i] if i < len(self.controls) else [None, None, None, None]
             err = self.tracking_error_m[i] if i < len(self.tracking_error_m) else None
-            rows.append({
+            row: dict[str, Any] = {
                 "time_s": t,
                 "x_m": pos[0],
                 "y_m": pos[1],
@@ -414,5 +616,10 @@ class RunResult:
                 "ty_Nm": ctrl[2] if len(ctrl) > 2 else None,
                 "tz_Nm": ctrl[3] if len(ctrl) > 3 else None,
                 "tracking_error_m": err,
-            })
+            }
+            if self.fuel_kg:
+                row["fuel_kg"] = self.fuel_kg[i] if i < len(self.fuel_kg) else None
+            if self.battery_soc_pct:
+                row["battery_soc_pct"] = self.battery_soc_pct[i] if i < len(self.battery_soc_pct) else None
+            rows.append(row)
         return rows

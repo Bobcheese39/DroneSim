@@ -21,6 +21,62 @@ def _col(rows: list[list[float]], idx: int) -> list[float | None]:
     return out
 
 
+def _default_altitude_m(run: RunResult) -> float:
+    cfg = run.metadata.get("cfg_summary") or {}
+    if "target_altitude_m" in cfg:
+        return float(cfg["target_altitude_m"])
+    return 5.0
+
+
+def _waypoints_from_metadata(run: RunResult) -> list[list[float]]:
+    meta = run.metadata or {}
+    raw_xyz = meta.get("waypoints_local_xyz") or meta.get("waypoints_local_xyz_msl")
+    if raw_xyz:
+        waypoints: list[list[float]] = []
+        for pt in raw_xyz:
+            if len(pt) >= 3:
+                waypoints.append([float(pt[0]), float(pt[1]), float(pt[2])])
+        if waypoints:
+            return waypoints
+
+    raw_xy = meta.get("waypoints_local_xy")
+    if raw_xy:
+        default_z = _default_altitude_m(run)
+        waypoints = []
+        for pt in raw_xy:
+            if len(pt) < 2:
+                continue
+            z = float(pt[2]) if len(pt) > 2 else default_z
+            waypoints.append([float(pt[0]), float(pt[1]), z])
+        if waypoints:
+            return waypoints
+
+    ref = run.reference_position_m or []
+    if not ref:
+        return []
+
+    waypoints = []
+    prev: list[float] | None = None
+    threshold_m = 0.5
+    for pt in ref:
+        if len(pt) < 3:
+            continue
+        candidate = [float(pt[0]), float(pt[1]), float(pt[2])]
+        if prev is None:
+            waypoints.append(candidate)
+            prev = candidate
+            continue
+        dist = math.sqrt(
+            (candidate[0] - prev[0]) ** 2
+            + (candidate[1] - prev[1]) ** 2
+            + (candidate[2] - prev[2]) ** 2
+        )
+        if dist >= threshold_m:
+            waypoints.append(candidate)
+            prev = candidate
+    return waypoints
+
+
 def _error_decomposition(run: RunResult) -> dict[str, list[float | None]]:
     pos = run.position_m or []
     ref = run.reference_position_m or []
@@ -59,6 +115,38 @@ def parameter_rows(run: RunResult) -> list[dict[str, Any]]:
     return [{"parameter": str(k), "value": v} for k, v in sorted(cfg.items())]
 
 
+def _controls_block(run: RunResult) -> dict[str, Any]:
+    """Return control time series with backend-appropriate channel labels."""
+    channels = run.metadata.get("control_channels")
+    if isinstance(channels, list) and channels:
+        labels = [str(name) for name in channels]
+        series = [
+            {"label": label, "values": _col(run.controls, idx)}
+            for idx, label in enumerate(labels)
+        ]
+        return {
+            "y_label": "norm",
+            "series": series,
+            "ft": _col(run.controls, 0),
+            "tx": _col(run.controls, 1) if len(labels) > 1 else [],
+            "ty": _col(run.controls, 2) if len(labels) > 2 else [],
+            "tz": _col(run.controls, 3) if len(labels) > 3 else [],
+        }
+    return {
+        "y_label": "N / Nm",
+        "series": [
+            {"label": "ft", "values": _col(run.controls, 0)},
+            {"label": "tx", "values": _col(run.controls, 1)},
+            {"label": "ty", "values": _col(run.controls, 2)},
+            {"label": "tz", "values": _col(run.controls, 3)},
+        ],
+        "ft": _col(run.controls, 0),
+        "tx": _col(run.controls, 1),
+        "ty": _col(run.controls, 2),
+        "tz": _col(run.controls, 3),
+    }
+
+
 def analysis_block(run: RunResult, clearance_m: list[float] | None = None) -> dict[str, Any]:
     """Return all series + tables needed by the Analysis and Replay views."""
     return {
@@ -85,13 +173,15 @@ def analysis_block(run: RunResult, clearance_m: list[float] | None = None) -> di
             "q": _col(run.angular_rate_rad_s, 1),
             "r": _col(run.angular_rate_rad_s, 2),
         },
-        "controls": {
-            "ft": _col(run.controls, 0),
-            "tx": _col(run.controls, 1),
-            "ty": _col(run.controls, 2),
-            "tz": _col(run.controls, 3),
-        },
+        "controls": _controls_block(run),
         "clearance_m": list(clearance_m) if clearance_m is not None else None,
+        "trajectory": {
+            "position_m": list(run.position_m),
+            "reference_position_m": list(run.reference_position_m),
+            "waypoints_m": _waypoints_from_metadata(run),
+        },
+        "fuel_kg": list(run.fuel_kg) if run.fuel_kg else None,
+        "battery_soc_pct": list(run.battery_soc_pct) if run.battery_soc_pct else None,
         "summary": summary_rows(run),
         "parameters": parameter_rows(run),
     }

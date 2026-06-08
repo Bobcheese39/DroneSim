@@ -3,7 +3,7 @@
 
 import { api } from "../api.js";
 import { store, setStatus } from "../state.js";
-import { makeLineChart, makeHistogramChart, makeEnvelopeChart, tableHtml } from "../charts.js";
+import { makeLineChart, makeHistogramChart, makeEnvelopeChart, makeTrajectory3dChart, tableHtml } from "../charts.js";
 
 export function renderAnalysis(ctx) {
   if (store.mcBatch?.analysis) {
@@ -15,6 +15,7 @@ export function renderAnalysis(ctx) {
 
 function renderSingleAnalysis() {
   const stage = document.getElementById("analysis-stage");
+  if (stage._analysisDestroy) stage._analysisDestroy();
   const inspector = document.getElementById("inspector");
   const run = store.run;
 
@@ -41,7 +42,7 @@ function renderSingleAnalysis() {
       ])}</div></div>`;
 
   const charts = buildSingleCharts(a, x);
-  renderChartGrid(stage, "Analysis", charts, x);
+  renderSingleChartGrid(stage, "Analysis", charts, x);
 }
 
 function renderMcAnalysis(ctx) {
@@ -160,9 +161,40 @@ async function loadTrial(ctx, trial) {
 }
 
 function buildSingleCharts(a, x) {
-  const charts = [
-    { title: "Tracking error", yLabel: "m", series: [{ label: "error", values: a.tracking_error_m }] },
+  const charts = [];
+
+  const traj = a.trajectory;
+  if (traj?.position_m?.length >= 2) {
+    charts.push({
+      type: "trajectory3d",
+      title: "3D trajectory (XYZ)",
+      trajectory: traj,
+      wide: true,
+    });
+  }
+
+  if (a.fuel_kg?.length) {
+    charts.push({
+      type: "line",
+      title: "Fuel remaining",
+      yLabel: "kg",
+      series: [{ label: "fuel", values: a.fuel_kg }],
+    });
+  }
+
+  if (a.battery_soc_pct?.length) {
+    charts.push({
+      type: "line",
+      title: "Battery state of charge",
+      yLabel: "%",
+      series: [{ label: "soc", values: a.battery_soc_pct }],
+    });
+  }
+
+  charts.push(
+    { type: "line", title: "Tracking error", yLabel: "m", series: [{ label: "error", values: a.tracking_error_m }] },
     {
+      type: "line",
       title: "Position error (actual \u2212 reference)",
       yLabel: "m",
       series: [
@@ -172,6 +204,7 @@ function buildSingleCharts(a, x) {
       ],
     },
     {
+      type: "line",
       title: "Velocity",
       yLabel: "m/s",
       series: [
@@ -181,6 +214,7 @@ function buildSingleCharts(a, x) {
       ],
     },
     {
+      type: "line",
       title: "Acceleration",
       yLabel: "m/s\u00b2",
       series: [
@@ -190,6 +224,7 @@ function buildSingleCharts(a, x) {
       ],
     },
     {
+      type: "line",
       title: "Attitude",
       yLabel: "rad",
       series: [
@@ -199,6 +234,7 @@ function buildSingleCharts(a, x) {
       ],
     },
     {
+      type: "line",
       title: "Angular rate",
       yLabel: "rad/s",
       series: [
@@ -208,18 +244,23 @@ function buildSingleCharts(a, x) {
       ],
     },
     {
+      type: "line",
       title: "Control effort",
-      yLabel: "N / Nm",
-      series: [
-        { label: "ft", values: a.controls.ft },
-        { label: "tx", values: a.controls.tx },
-        { label: "ty", values: a.controls.ty },
-        { label: "tz", values: a.controls.tz },
-      ],
-    },
-  ];
+      yLabel: a.controls?.y_label === "norm" ? "norm" : "N / Nm",
+      series: Array.isArray(a.controls?.series) && a.controls.series.length
+        ? a.controls.series.map((row) => ({ label: row.label, values: row.values }))
+        : [
+            { label: "ft", values: a.controls.ft },
+            { label: "tx", values: a.controls.tx },
+            { label: "ty", values: a.controls.ty },
+            { label: "tz", values: a.controls.tz },
+          ],
+    }
+  );
+
   if (a.clearance_m) {
     charts.push({
+      type: "line",
       title: "Terrain clearance",
       yLabel: "m",
       series: [
@@ -229,6 +270,36 @@ function buildSingleCharts(a, x) {
     });
   }
   return charts;
+}
+
+function renderSingleChartGrid(stage, heading, charts, x) {
+  stage.innerHTML = `<h2 class="section-head">${heading}</h2><div class="chart-grid" id="chart-grid"></div>`;
+  const grid = document.getElementById("chart-grid");
+  const destroyers = [];
+
+  charts.forEach((c) => {
+    const card = document.createElement("div");
+    card.className = c.wide ? "chart-card chart-card-wide" : "chart-card";
+    const host = document.createElement("div");
+    card.appendChild(host);
+    grid.appendChild(card);
+
+    if (c.type === "trajectory3d") {
+      makeTrajectory3dChart(host, { title: c.title, trajectory: c.trajectory }).then((plot) => {
+        if (plot?.destroy) destroyers.push(plot.destroy);
+      });
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      makeLineChart(host, { title: c.title, x, series: c.series, yLabel: c.yLabel });
+    });
+  });
+
+  stage._analysisDestroy = () => {
+    for (const fn of destroyers) fn();
+    stage._analysisDestroy = null;
+  };
 }
 
 function renderChartGrid(stage, heading, charts, x) {

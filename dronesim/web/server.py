@@ -27,6 +27,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from dronesim.config.jsbsim_aircraft import apply_jsbsim_aircraft, list_jsbsim_aircraft
+from dronesim.config.jsbsim_presets import apply_jsbsim_preset, list_jsbsim_presets
 from dronesim.models import MapSpec, RunConfig, ScenarioSpec
 from dronesim.services.terrain import (
     MapAsset,
@@ -98,6 +100,40 @@ def _cache_miss_payload(exc: MapCacheMiss) -> dict[str, Any]:
 @app.get("/api/backends")
 def list_backends() -> list[dict[str, str]]:
     return get_state().factory.available()
+
+
+@app.get("/api/jsbsim/presets")
+def jsbsim_presets() -> dict[str, Any]:
+    return {"presets": list_jsbsim_presets()}
+
+
+@app.post("/api/jsbsim/apply-preset")
+def jsbsim_apply_preset(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    preset_id = payload.get("preset_id")
+    if not preset_id:
+        raise HTTPException(status_code=400, detail="preset_id is required")
+    scenario = payload.get("scenario") or {}
+    try:
+        return apply_jsbsim_preset(scenario, str(preset_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/jsbsim/aircraft")
+def jsbsim_aircraft() -> dict[str, Any]:
+    return {"aircraft": list_jsbsim_aircraft()}
+
+
+@app.post("/api/jsbsim/apply-aircraft")
+def jsbsim_apply_aircraft(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    aircraft_id = payload.get("aircraft_id")
+    if not aircraft_id:
+        raise HTTPException(status_code=400, detail="aircraft_id is required")
+    scenario = payload.get("scenario") or {}
+    try:
+        return apply_jsbsim_aircraft(scenario, str(aircraft_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/scenarios")

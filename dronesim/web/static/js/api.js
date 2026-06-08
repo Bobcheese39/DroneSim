@@ -33,6 +33,12 @@ async function post(path, body) {
 
 export const api = {
   backends: () => get("/api/backends"),
+  jsbsimPresets: () => get("/api/jsbsim/presets"),
+  applyJsbsimPreset: (scenario, presetId) =>
+    post("/api/jsbsim/apply-preset", { scenario, preset_id: presetId }),
+  jsbsimAircraft: () => get("/api/jsbsim/aircraft"),
+  applyJsbsimAircraft: (scenario, aircraftId) =>
+    post("/api/jsbsim/apply-aircraft", { scenario, aircraft_id: aircraftId }),
   listScenarios: () => get("/api/scenarios"),
   defaultScenario: () => get("/api/scenarios/default"),
   getScenario: (id) => get(`/api/scenarios/${id}`),

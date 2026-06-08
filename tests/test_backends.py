@@ -17,9 +17,15 @@ from dronesim.sim import (
     RunManager,
     SimulationBackend,
 )
+from dronesim.config.jsbsim_aircraft import apply_jsbsim_aircraft, list_jsbsim_aircraft
+from dronesim.config.jsbsim_presets import apply_jsbsim_preset, list_jsbsim_presets
+from dronesim.models import validate_jsbsim_scenario
 from dronesim.sim.backends_jsbsim import (
     _clamp_cruise_speed,
+    _enforce_min_waypoint_altitude,
+    _initial_flight_path_deg,
     _normalize_altitude_reference,
+    _resolve_autopilot_config,
     _resolve_waypoints_3d,
     _state_is_finite,
 )
@@ -355,6 +361,7 @@ class _FakeJSBSimFDM:
         self.props["velocities/v-east-fps"] = 0.0
         self.props["velocities/v-north-fps"] = self.props["velocities/vt-fps"]
         self.props["velocities/v-down-fps"] = 0.0
+        self.props["propulsion/tank/contents-lbs"] = 200.0
         return True
 
     def run(self) -> bool:
@@ -362,6 +369,8 @@ class _FakeJSBSimFDM:
         throttle = self.props.get("fcs/throttle-cmd-norm", 0.65)
         aileron = self.props.get("fcs/aileron-cmd-norm", 0.0)
         elevator = self.props.get("fcs/elevator-cmd-norm", 0.0)
+        fuel_lbs = max(0.0, self.props.get("propulsion/tank/contents-lbs", 0.0) - throttle * 0.05)
+        self.props["propulsion/tank/contents-lbs"] = fuel_lbs
         speed_fps = max(20.0, self.props.get("velocities/vt-fps", 120.0) + (throttle - 0.5) * 4.0)
         psi = self.props.get("attitude/psi-rad", 0.0) + aileron * 0.02
         speed_mps = speed_fps * 0.3048
@@ -398,6 +407,76 @@ def math_cos(value: float) -> float:
     import math
 
     return math.cos(value)
+
+
+class JSBSimPresetsTest(unittest.TestCase):
+    def test_list_presets_includes_level_cruise(self) -> None:
+        ids = {row["id"] for row in list_jsbsim_presets()}
+        self.assertIn("level_cruise_msl", ids)
+        self.assertIn("test_harness", ids)
+
+    def test_apply_preset_merges_vehicle_and_run_config(self) -> None:
+        base = {
+            "vehicle": {"parameters": {"aircraft": "c172p"}, "controller": {}},
+            "run_config": {"dt_s": 0.1},
+        }
+        merged = apply_jsbsim_preset(base, "level_cruise_msl")
+        self.assertEqual(merged["vehicle"]["parameters"]["altitude_reference"], "msl")
+        self.assertEqual(merged["vehicle"]["parameters"]["aircraft"], "c172p")
+        self.assertEqual(merged["vehicle"]["controller"]["max_bank_deg"], 20.0)
+        self.assertNotIn("cruise_speed_mps", merged["vehicle"]["controller"])
+        self.assertEqual(merged["run_config"]["dt_s"], 0.05)
+        self.assertEqual(merged["metadata"]["jsbsim_preset"], "level_cruise_msl")
+
+    def test_apply_unknown_preset_raises(self) -> None:
+        with self.assertRaises(KeyError):
+            apply_jsbsim_preset({}, "not_a_preset")
+
+
+class JSBSimAircraftTest(unittest.TestCase):
+    def test_list_aircraft_includes_curated_models(self) -> None:
+        ids = {row["id"] for row in list_jsbsim_aircraft()}
+        self.assertIn("c172p", ids)
+        self.assertIn("pa28", ids)
+        self.assertIn("ov10", ids)
+
+    def test_apply_aircraft_merges_vehicle(self) -> None:
+        base = {"vehicle": {"parameters": {}, "controller": {}}, "run_config": {}}
+        merged = apply_jsbsim_aircraft(base, "pa28")
+        self.assertEqual(merged["vehicle"]["parameters"]["aircraft"], "pa28")
+        self.assertEqual(merged["vehicle"]["display_name"], "Piper PA-28 Cherokee")
+        self.assertEqual(merged["vehicle"]["controller"]["cruise_speed_mps"], 40.0)
+        self.assertEqual(merged["metadata"]["jsbsim_aircraft"], "pa28")
+
+    def test_apply_unknown_aircraft_raises(self) -> None:
+        with self.assertRaises(KeyError):
+            apply_jsbsim_aircraft({}, "not_an_aircraft")
+
+
+class JSBSimAutopilotConfigTest(unittest.TestCase):
+    def test_pitch_gain_derived_without_override(self) -> None:
+        cfg = _resolve_autopilot_config({"altitude_gain": 0.01}, {})
+        self.assertAlmostEqual(cfg.resolved_pitch_gain(), 0.8)
+        self.assertAlmostEqual(cfg.resolved_climb_rate_gain(), 0.01)
+
+    def test_initial_flight_path_from_waypoints(self) -> None:
+        wps = [(0.0, 0.0, 100.0), (1000.0, 0.0, 200.0)]
+        gamma = _initial_flight_path_deg(wps, {})
+        self.assertGreater(gamma, 5.0)
+        self.assertLess(gamma, 7.0)
+
+    def test_validate_jsbsim_scenario_warns_on_dt_and_ias_mismatch(self) -> None:
+        scenario = _make_scenario()
+        scenario.run_config.dt_s = 0.2
+        warnings = validate_jsbsim_scenario(
+            scenario,
+            altitude_ref="msl",
+            cruise_speed_mps=45.0,
+            initial_ias_mps=30.0,
+            dt_s=0.2,
+        )
+        self.assertTrue(any("dt_s" in w for w in warnings))
+        self.assertTrue(any("initial_ias_mps" in w for w in warnings))
 
 
 class JSBSimHelpersTest(unittest.TestCase):
@@ -451,6 +530,20 @@ class JSBSimHelpersTest(unittest.TestCase):
         self.assertEqual(len(warnings), 0)
         self.assertAlmostEqual(resolved[0][2], 150.0)
         self.assertAlmostEqual(resolved[1][2], 120.0)
+
+    def test_enforce_min_waypoint_altitude_raises_low_spawn(self) -> None:
+        def terrain_at(_x: float, _y: float) -> float:
+            return 50.0
+
+        waypoints = [(0.0, 0.0, 55.0), (100.0, 0.0, 55.0)]
+        adjusted, warnings = _enforce_min_waypoint_altitude(
+            waypoints,
+            terrain_at=terrain_at,
+            min_agl_m=10.0,
+        )
+        self.assertEqual(len(warnings), 2)
+        self.assertAlmostEqual(adjusted[0][2], 65.0)
+        self.assertAlmostEqual(adjusted[1][2], 65.0)
 
 
 class JSBSimCessnaBackendTest(unittest.TestCase):
@@ -527,6 +620,87 @@ class JSBSimCessnaBackendTest(unittest.TestCase):
         self.assertEqual(progress[-1], (5, 5))
         self.assertEqual(result.metadata.get("altitude_reference"), "msl")
         self.assertIn("waypoints_local_xyz_msl", result.metadata)
+        self.assertEqual(len(result.fuel_kg), len(result.time_s))
+        self.assertGreater(result.fuel_kg[0], result.fuel_kg[-1])
+        self.assertIn("fuel_property", result.metadata)
+
+    def test_compute_autopilot_elevator_sign(self) -> None:
+        backend = JSBSimCessnaBackend()
+        _aileron, _rudder, elevator, _throttle, _gamma = backend._compute_autopilot(
+            pos=[0.0, 0.0, 100.0],
+            vel=[40.0, 0.0, 0.0],
+            att=[0.0, 0.0, 0.0],
+            target=(1000.0, 0.0, 120.0),
+            speed_mps=35.0,
+            cruise_speed_mps=40.0,
+            heading_gain=1.0,
+            pitch_gain=0.8,
+            climb_rate_gain=0.01,
+            climb_rate_limit_mps=3.0,
+            elevator_gain=0.12,
+            elevator_sign=-1.0,
+            max_bank_rad=0.4,
+            elevator_trim=0.0,
+            base_throttle=0.65,
+            throttle_gain=0.02,
+            capture_radius_m=50.0,
+            max_climb_deg=6.0,
+            max_descent_deg=6.0,
+            max_sink_mps=4.0,
+            min_agl_m=10.0,
+            terrain_at=None,
+            commanded_gamma_deg=0.0,
+            gamma_rate_limit_deg_s=3.0,
+            dt_s=0.05,
+        )
+        self.assertLess(
+            elevator,
+            0.0,
+            "positive altitude error should command nose-up (negative JSBSim elevator)",
+        )
+
+    def test_mocked_controls_vary_each_step(self) -> None:
+        fake_module = types.SimpleNamespace(FGFDMExec=_FakeJSBSimFDM, __version__="fake-test")
+        prior = sys.modules.get("jsbsim")
+        sys.modules["jsbsim"] = fake_module
+        try:
+            scenario = _make_scenario()
+            scenario.vehicle.model_type = "fixed_wing"
+            scenario.vehicle.backend_id = "jsbsim_cessna"
+            scenario.vehicle.parameters = {
+                "aircraft": "c172p",
+                "altitude_reference": "msl",
+                "ic_settle_steps": 0,
+            }
+            scenario.waypoints.waypoints[0].z_m = 200.0
+            scenario.waypoints.waypoints[1].x_m = 500.0
+            scenario.waypoints.waypoints[1].y_m = 200.0
+            scenario.waypoints.waypoints[1].z_m = 220.0
+            scenario.vehicle.controller = {
+                "type": "waypoint_autopilot",
+                "cruise_speed_mps": 35.0,
+                "max_bank_deg": 25.0,
+                "waypoint_capture_radius_m": 10.0,
+                "min_agl_m": 0.0,
+            }
+            cfg = RunConfig(
+                backend_id="jsbsim_cessna",
+                max_steps=8,
+                dt_s=0.1,
+                target_altitude_m=200.0,
+                waypoint_threshold_m=0.1,
+            )
+            result = JSBSimCessnaBackend().run(scenario, cfg)
+        finally:
+            if prior is None:
+                sys.modules.pop("jsbsim", None)
+            else:
+                sys.modules["jsbsim"] = prior
+
+        self.assertGreater(len(result.controls), 1)
+        first = result.controls[0]
+        varied = any(row != first for row in result.controls[1:])
+        self.assertTrue(varied, "autopilot should update controls each simulation step")
 
     def test_live_jsbsim_short_run_stays_finite(self) -> None:
         try:
@@ -534,24 +708,24 @@ class JSBSimCessnaBackendTest(unittest.TestCase):
         except Exception:
             self.skipTest("jsbsim not installed")
 
-        scenario = _make_scenario()
-        scenario.vehicle.model_id = "jsbsim_c172"
+        merged_aircraft = apply_jsbsim_aircraft(
+            {
+                "vehicle": {},
+                "run_config": {"backend_id": "jsbsim_cessna"},
+                "waypoints": {"waypoints": []},
+            },
+            "c172p",
+        )
+        merged = apply_jsbsim_preset(merged_aircraft, "level_cruise_msl")
+        scenario = ScenarioSpec.from_dict(
+            {
+                **_make_scenario().to_dict(),
+                "vehicle": merged["vehicle"],
+                "run_config": merged["run_config"],
+            }
+        )
         scenario.vehicle.model_type = "fixed_wing"
         scenario.vehicle.backend_id = "jsbsim_cessna"
-        scenario.vehicle.parameters = {
-            "aircraft": "c172p",
-            "altitude_reference": "msl",
-            "initial_ias_mps": 45.0,
-            "ic_settle_steps": 10,
-        }
-        scenario.vehicle.controller = {
-            "type": "waypoint_autopilot",
-            "cruise_speed_mps": 45.0,
-            "max_bank_deg": 20.0,
-            "waypoint_capture_radius_m": 50.0,
-            "heading_gain": 1.0,
-            "altitude_gain": 0.008,
-        }
         scenario.waypoints.waypoints[0].z_m = 500.0
         scenario.waypoints.waypoints[0].alt_m = 500.0
         scenario.waypoints.waypoints[1].x_m = 800.0
@@ -560,18 +734,67 @@ class JSBSimCessnaBackendTest(unittest.TestCase):
         scenario.waypoints.waypoints[1].alt_m = 500.0
         cfg = RunConfig(
             backend_id="jsbsim_cessna",
-            max_steps=400,
+            max_steps=250,
             dt_s=0.05,
             target_altitude_m=500.0,
             waypoint_threshold_m=80.0,
         )
         result = JSBSimCessnaBackend().run(scenario, cfg)
+        target_alt_m = 500.0
         z_vals = [p[2] for p in result.position_m if len(p) > 2]
-        self.assertGreater(len(z_vals), 150)
+        self.assertGreater(len(z_vals), 100)
         self.assertTrue(all(math.isfinite(v) for v in z_vals))
-        self.assertGreater(max(z_vals), 200.0)
-        self.assertGreater(result.summary.duration_s, 7.0)
         self.assertNotEqual(result.status, "unstable")
+        self.assertNotEqual(result.status, "ground_collision")
+        self.assertGreater(min(z_vals), target_alt_m - 50.0)
+        self.assertLess(max(z_vals), target_alt_m + 50.0)
+        mean_z = sum(z_vals) / len(z_vals)
+        self.assertAlmostEqual(mean_z, target_alt_m, delta=50.0)
+        self.assertGreater(result.summary.duration_s, 7.0)
+
+    def test_live_jsbsim_aircraft_smoke_stays_finite(self) -> None:
+        try:
+            import jsbsim  # noqa: F401
+        except Exception:
+            self.skipTest("jsbsim not installed")
+
+        for aircraft_id in ("j3cub", "t38"):
+            with self.subTest(aircraft_id=aircraft_id):
+                merged_aircraft = apply_jsbsim_aircraft(
+                    {
+                        "vehicle": {},
+                        "run_config": {"backend_id": "jsbsim_cessna"},
+                    },
+                    aircraft_id,
+                )
+                merged = apply_jsbsim_preset(merged_aircraft, "test_harness")
+                scenario = ScenarioSpec.from_dict(
+                    {
+                        **_make_scenario().to_dict(),
+                        "vehicle": merged["vehicle"],
+                        "run_config": merged["run_config"],
+                    }
+                )
+                scenario.vehicle.model_type = "fixed_wing"
+                scenario.vehicle.backend_id = "jsbsim_cessna"
+                scenario.waypoints.waypoints[0].z_m = 500.0
+                scenario.waypoints.waypoints[0].alt_m = 500.0
+                scenario.waypoints.waypoints[1].x_m = 800.0
+                scenario.waypoints.waypoints[1].y_m = 0.0
+                scenario.waypoints.waypoints[1].z_m = 500.0
+                scenario.waypoints.waypoints[1].alt_m = 500.0
+                cfg = RunConfig(
+                    backend_id="jsbsim_cessna",
+                    max_steps=200,
+                    dt_s=0.05,
+                    target_altitude_m=500.0,
+                    waypoint_threshold_m=80.0,
+                )
+                result = JSBSimCessnaBackend().run(scenario, cfg)
+                z_vals = [p[2] for p in result.position_m if len(p) > 2]
+                self.assertGreater(len(z_vals), 50)
+                self.assertTrue(all(math.isfinite(v) for v in z_vals))
+                self.assertNotEqual(result.status, "unstable")
 
 
 if __name__ == "__main__":

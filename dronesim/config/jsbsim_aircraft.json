@@ -1,0 +1,512 @@
+{
+  "version": "1",
+  "aircraft": {
+    "c172p": {
+      "label": "Cessna 172P",
+      "description": "Light single-engine trainer; default JSBSim GA model.",
+      "jsbsim_model": "c172p",
+      "vehicle": {
+        "model_id": "jsbsim_c172p",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Cessna 172P",
+        "parameters": {
+          "aircraft": "c172p",
+          "initial_ias_mps": 45.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 45.0,
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 50.0,
+          "heading_gain": 1.0,
+          "altitude_gain": 0.008,
+          "climb_rate_gain": 0.008,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.12,
+          "gamma_rate_limit_deg_s": 3.0,
+          "base_throttle": 0.68,
+          "throttle_gain": 0.018,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "c172r": {
+      "label": "Cessna 172R",
+      "description": "Modernized Cessna 172 variant with similar flight envelope.",
+      "jsbsim_model": "c172r",
+      "vehicle": {
+        "model_id": "jsbsim_c172r",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Cessna 172R",
+        "parameters": {
+          "aircraft": "c172r",
+          "initial_ias_mps": 45.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 45.0,
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 50.0,
+          "heading_gain": 1.0,
+          "altitude_gain": 0.008,
+          "climb_rate_gain": 0.008,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.12,
+          "gamma_rate_limit_deg_s": 3.0,
+          "base_throttle": 0.68,
+          "throttle_gain": 0.018,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "j3cub": {
+      "label": "Piper J-3 Cub",
+      "description": "Slow vintage taildragger; reduced bank and climb limits.",
+      "jsbsim_model": "J3Cub",
+      "vehicle": {
+        "model_id": "jsbsim_j3cub",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Piper J-3 Cub",
+        "parameters": {
+          "aircraft": "J3Cub",
+          "initial_ias_mps": 28.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 18,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 28.0,
+          "max_bank_deg": 15.0,
+          "waypoint_capture_radius_m": 40.0,
+          "heading_gain": 1.2,
+          "altitude_gain": 0.006,
+          "climb_rate_gain": 0.006,
+          "climb_rate_limit_mps": 2.0,
+          "elevator_gain": 0.14,
+          "gamma_rate_limit_deg_s": 2.0,
+          "base_throttle": 0.75,
+          "throttle_gain": 0.022,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 5.0,
+          "max_descent_deg": 5.0,
+          "max_sink_rate_mps": 3.0,
+          "min_agl_m": 15.0
+        }
+      }
+    },
+    "pa28": {
+      "label": "Piper PA-28 Cherokee",
+      "description": "Popular low-wing GA trainer and tourer.",
+      "jsbsim_model": "pa28",
+      "vehicle": {
+        "model_id": "jsbsim_pa28",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Piper PA-28 Cherokee",
+        "parameters": {
+          "aircraft": "pa28",
+          "initial_ias_mps": 40.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 40.0,
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 50.0,
+          "heading_gain": 1.05,
+          "altitude_gain": 0.007,
+          "climb_rate_gain": 0.007,
+          "climb_rate_limit_mps": 3.0,
+          "elevator_gain": 0.12,
+          "gamma_rate_limit_deg_s": 2.8,
+          "base_throttle": 0.70,
+          "throttle_gain": 0.019,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "c182": {
+      "label": "Cessna 182 Skylane",
+      "description": "Higher-power single-engine GA with slightly faster cruise.",
+      "jsbsim_model": "c182",
+      "vehicle": {
+        "model_id": "jsbsim_c182",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Cessna 182 Skylane",
+        "parameters": {
+          "aircraft": "c182",
+          "initial_ias_mps": 48.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 24
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 48.0,
+          "max_bank_deg": 22.0,
+          "waypoint_capture_radius_m": 55.0,
+          "heading_gain": 0.95,
+          "altitude_gain": 0.007,
+          "climb_rate_gain": 0.007,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.11,
+          "gamma_rate_limit_deg_s": 3.0,
+          "base_throttle": 0.65,
+          "throttle_gain": 0.017,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "pc7": {
+      "label": "Pilatus PC-7",
+      "description": "Turboprop military trainer; moderate cruise speed.",
+      "jsbsim_model": "pc7",
+      "vehicle": {
+        "model_id": "jsbsim_pc7",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "Pilatus PC-7",
+        "parameters": {
+          "aircraft": "pc7",
+          "initial_ias_mps": 55.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 12,
+          "ic_trim_steps": 20
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 55.0,
+          "max_bank_deg": 22.0,
+          "waypoint_capture_radius_m": 60.0,
+          "heading_gain": 0.9,
+          "altitude_gain": 0.006,
+          "climb_rate_gain": 0.006,
+          "climb_rate_limit_mps": 4.0,
+          "elevator_gain": 0.10,
+          "gamma_rate_limit_deg_s": 3.5,
+          "base_throttle": 0.62,
+          "throttle_gain": 0.016,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 7.0,
+          "max_descent_deg": 7.0,
+          "max_sink_rate_mps": 5.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "dhc6": {
+      "label": "DHC-6 Twin Otter",
+      "description": "Twin-engine STOL utility aircraft.",
+      "jsbsim_model": "DHC6",
+      "vehicle": {
+        "model_id": "jsbsim_dhc6",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "DHC-6 Twin Otter",
+        "parameters": {
+          "aircraft": "DHC6",
+          "initial_ias_mps": 50.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 15,
+          "ic_trim_steps": 22
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 50.0,
+          "max_bank_deg": 20.0,
+          "waypoint_capture_radius_m": 55.0,
+          "heading_gain": 0.95,
+          "altitude_gain": 0.007,
+          "climb_rate_gain": 0.007,
+          "climb_rate_limit_mps": 3.5,
+          "elevator_gain": 0.11,
+          "gamma_rate_limit_deg_s": 3.0,
+          "base_throttle": 0.64,
+          "throttle_gain": 0.017,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 6.0,
+          "max_descent_deg": 6.0,
+          "max_sink_rate_mps": 4.0,
+          "min_agl_m": 15.0
+        }
+      }
+    },
+    "t6texan2": {
+      "label": "T-6 Texan II",
+      "description": "Modern turboprop trainer with higher cruise speed.",
+      "jsbsim_model": "t6texan2",
+      "vehicle": {
+        "model_id": "jsbsim_t6texan2",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "T-6 Texan II",
+        "parameters": {
+          "aircraft": "t6texan2",
+          "initial_ias_mps": 65.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 12,
+          "ic_trim_steps": 18
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 65.0,
+          "max_bank_deg": 24.0,
+          "waypoint_capture_radius_m": 70.0,
+          "heading_gain": 0.85,
+          "altitude_gain": 0.005,
+          "climb_rate_gain": 0.005,
+          "climb_rate_limit_mps": 5.0,
+          "elevator_gain": 0.09,
+          "gamma_rate_limit_deg_s": 4.0,
+          "base_throttle": 0.58,
+          "throttle_gain": 0.014,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "max_sink_rate_mps": 5.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "ov10": {
+      "label": "OV-10 Bronco",
+      "description": "Light twin turboprop observation and attack aircraft.",
+      "jsbsim_model": "OV10",
+      "vehicle": {
+        "model_id": "jsbsim_ov10",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "OV-10 Bronco",
+        "parameters": {
+          "aircraft": "OV10",
+          "initial_ias_mps": 55.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 12,
+          "ic_trim_steps": 20
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 55.0,
+          "max_bank_deg": 22.0,
+          "waypoint_capture_radius_m": 60.0,
+          "heading_gain": 0.9,
+          "altitude_gain": 0.006,
+          "climb_rate_gain": 0.006,
+          "climb_rate_limit_mps": 4.0,
+          "elevator_gain": 0.10,
+          "gamma_rate_limit_deg_s": 3.5,
+          "base_throttle": 0.60,
+          "throttle_gain": 0.016,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 7.0,
+          "max_descent_deg": 7.0,
+          "max_sink_rate_mps": 5.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "a4": {
+      "label": "A-4 Skyhawk",
+      "description": "Subsonic carrier-capable attack jet.",
+      "jsbsim_model": "A4",
+      "vehicle": {
+        "model_id": "jsbsim_a4",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "A-4 Skyhawk",
+        "parameters": {
+          "aircraft": "A4",
+          "initial_ias_mps": 65.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 10,
+          "ic_trim_steps": 16
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 65.0,
+          "max_bank_deg": 25.0,
+          "waypoint_capture_radius_m": 75.0,
+          "heading_gain": 0.8,
+          "altitude_gain": 0.005,
+          "climb_rate_gain": 0.005,
+          "climb_rate_limit_mps": 5.5,
+          "elevator_gain": 0.09,
+          "gamma_rate_limit_deg_s": 4.5,
+          "base_throttle": 0.55,
+          "throttle_gain": 0.013,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "max_sink_rate_mps": 6.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "t37": {
+      "label": "T-37 Tweet",
+      "description": "Twin-jet primary trainer.",
+      "jsbsim_model": "T37",
+      "vehicle": {
+        "model_id": "jsbsim_t37",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "T-37 Tweet",
+        "parameters": {
+          "aircraft": "T37",
+          "initial_ias_mps": 60.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 10,
+          "ic_trim_steps": 16
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 60.0,
+          "max_bank_deg": 24.0,
+          "waypoint_capture_radius_m": 65.0,
+          "heading_gain": 0.85,
+          "altitude_gain": 0.005,
+          "climb_rate_gain": 0.005,
+          "climb_rate_limit_mps": 5.0,
+          "elevator_gain": 0.09,
+          "gamma_rate_limit_deg_s": 4.0,
+          "base_throttle": 0.57,
+          "throttle_gain": 0.014,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "max_sink_rate_mps": 5.5,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "t38": {
+      "label": "T-38 Talon",
+      "description": "Supersonic-capable jet trainer; uses upper autopilot speed limit.",
+      "jsbsim_model": "T38",
+      "vehicle": {
+        "model_id": "jsbsim_t38",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "T-38 Talon",
+        "parameters": {
+          "aircraft": "T38",
+          "initial_ias_mps": 70.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 10,
+          "ic_trim_steps": 14
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 70.0,
+          "max_bank_deg": 25.0,
+          "waypoint_capture_radius_m": 80.0,
+          "heading_gain": 0.75,
+          "altitude_gain": 0.004,
+          "climb_rate_gain": 0.004,
+          "climb_rate_limit_mps": 6.0,
+          "elevator_gain": 0.08,
+          "gamma_rate_limit_deg_s": 5.0,
+          "base_throttle": 0.52,
+          "throttle_gain": 0.012,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "max_sink_rate_mps": 6.0,
+          "min_agl_m": 10.0
+        }
+      }
+    },
+    "p51d": {
+      "label": "P-51 Mustang",
+      "description": "WWII fighter; high cruise within autopilot speed clamp.",
+      "jsbsim_model": "p51d",
+      "vehicle": {
+        "model_id": "jsbsim_p51d",
+        "model_type": "fixed_wing",
+        "backend_id": "jsbsim_cessna",
+        "display_name": "P-51 Mustang",
+        "parameters": {
+          "aircraft": "p51d",
+          "initial_ias_mps": 70.0,
+          "engine_running": true,
+          "auto_trim_elevator": true,
+          "ic_settle_steps": 10,
+          "ic_trim_steps": 16
+        },
+        "controller": {
+          "type": "waypoint_autopilot",
+          "cruise_speed_mps": 70.0,
+          "max_bank_deg": 25.0,
+          "waypoint_capture_radius_m": 80.0,
+          "heading_gain": 0.75,
+          "altitude_gain": 0.004,
+          "climb_rate_gain": 0.004,
+          "climb_rate_limit_mps": 6.0,
+          "elevator_gain": 0.08,
+          "gamma_rate_limit_deg_s": 5.0,
+          "base_throttle": 0.54,
+          "throttle_gain": 0.012,
+          "elevator_trim": 0.0,
+          "elevator_sign": -1.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "max_sink_rate_mps": 6.0,
+          "min_agl_m": 10.0
+        }
+      }
+    }
+  }
+}

@@ -39,6 +39,8 @@ function markerToLocal(m) {
 export function mountCreate(ctx) {
   const inspector = document.getElementById("inspector");
   const hud = document.getElementById("map-hud");
+  void loadJsbsimPresets();
+  void loadJsbsimAircraft();
 
   function backendOptions(selected) {
     return store.backends
@@ -283,11 +285,46 @@ export function mountCreate(ctx) {
     const controller = vehicle.controller || {};
     const altRef = String(params.altitude_reference || "agl").toLowerCase() === "msl" ? "msl" : "agl";
     const engineOn = params.engine_running !== false && params.engine_running !== "false";
+    const autoTrim = params.auto_trim_elevator === true || params.auto_trim_elevator === "true";
+    const activePreset = (store.scenario?.metadata?.jsbsim_preset || "").trim();
+    const presetOptions = (store.jsbsimPresets || [])
+      .map(
+        (p) =>
+          `<option value="${escapeAttr(p.id)}" ${p.id === activePreset ? "selected" : ""}>${escapeHtml(p.label)}</option>`
+      )
+      .join("");
+    const { catalogId: activeAircraft, isCustom: aircraftIsCustom } = resolveActiveJsbsimAircraft(
+      params,
+      store.scenario?.metadata
+    );
+    const aircraftOptions = (store.jsbsimAircraft || [])
+      .map(
+        (a) =>
+          `<option value="${escapeAttr(a.id)}" ${a.id === activeAircraft ? "selected" : ""}>${escapeHtml(a.label)}</option>`
+      )
+      .join("");
     return `
       <div class="insp-section">
         <h3 class="insp-title">Fixed-Wing Vehicle</h3>
         <div class="card">
-          <div class="field"><label>${labelWithTip("Aircraft model", "JSBSim aircraft model name. The default matches the packaged Cessna 172 model used by common JSBSim installs.")}</label><input type="text" data-vtext="parameters.aircraft" value="${escapeAttr(params.aircraft || params.aircraft_xml || "c172p")}" /></div>
+          <div class="field">
+            <label>${labelWithTip("Aircraft model", "Pick a prebuilt JSBSim aircraft with baseline autopilot tuning, or Custom to enter a model name manually.")}</label>
+            <select data-jsbsim-aircraft>
+              <option value="" ${aircraftIsCustom ? "selected" : ""}>Custom</option>
+              ${aircraftOptions}
+            </select>
+          </div>
+          <div class="field" ${aircraftIsCustom ? "" : 'style="display:none;"'} data-jsbsim-aircraft-custom-wrap>
+            <label>${labelWithTip("Custom aircraft name", "JSBSim folder/model name passed to load_model (e.g. c172p, pa28).")}</label>
+            <input type="text" data-jsbsim-aircraft-custom data-vtext="parameters.aircraft" value="${escapeAttr(params.aircraft || params.aircraft_xml || "c172p")}" />
+          </div>
+          <div class="field">
+            <label>${labelWithTip("Flight profile preset", "Apply run settings and controller tuning for a flight profile. Pick aircraft first, then profile. Choose Custom to edit manually.")}</label>
+            <select data-jsbsim-preset>
+              <option value="" ${activePreset ? "" : "selected"}>Custom</option>
+              ${presetOptions}
+            </select>
+          </div>
           <div class="field-row">
             <div class="field">
               <label>${labelWithTip("Altitude reference", "Whether waypoint and spawn heights are above ground level (AGL) or mean sea level (MSL).")}</label>
@@ -327,10 +364,21 @@ export function mountCreate(ctx) {
             <div class="field"><label>${labelWithTip("Elevator trim", "Baseline elevator command.")}</label><input type="number" step="0.01" min="-1" max="1" data-vk="controller.elevator_trim" value="${safeNum(controller.elevator_trim, 0)}" /></div>
           </div>
           <div class="field-row">
-            <div class="field"><label>${labelWithTip("Max sink rate (m/s)", "Triggers extra climb command when exceeded.")}</label><input type="number" step="0.5" data-vk="controller.max_sink_rate_mps" value="${safeNum(controller.max_sink_rate_mps, 5)}" /></div>
-            <div class="field"><label>${labelWithTip("Max climb/descent (deg)", "Limits commanded flight-path angle.")}</label><input type="number" step="0.5" data-vk="controller.max_climb_deg" value="${safeNum(controller.max_climb_deg, 8)}" /></div>
+            <div class="field"><label>${labelWithTip("Climb-rate gain", "Altitude error to commanded climb rate (m/s per m). Defaults to altitude gain.")}</label><input type="number" step="0.001" data-vk="controller.climb_rate_gain" value="${safeNum(controller.climb_rate_gain, controller.altitude_gain != null ? controller.altitude_gain : 0.012)}" /></div>
+            <div class="field"><label>${labelWithTip("Climb-rate limit (m/s)", "Caps commanded vertical speed.")}</label><input type="number" step="0.1" data-vk="controller.climb_rate_limit_mps" value="${safeNum(controller.climb_rate_limit_mps, 4)}" /></div>
           </div>
-          <div class="field"><label>${labelWithTip("JSBSim root/path", "Optional root directory for JSBSim aircraft, engine, and systems data. Leave blank for package defaults.")}</label><input type="text" data-vtext="parameters.jsbsim_root" value="${escapeAttr(params.jsbsim_root || "")}" placeholder="auto" /></div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Elevator gain", "Climb-rate error to elevator command.")}</label><input type="number" step="0.01" data-vk="controller.elevator_gain" value="${safeNum(controller.elevator_gain, 0.12)}" /></div>
+            <div class="field"><label>${labelWithTip("Gamma rate limit (deg/s)", "Limits how fast commanded climb rate can change.")}</label><input type="number" step="0.1" data-vk="controller.gamma_rate_limit_deg_s" value="${safeNum(controller.gamma_rate_limit_deg_s, 4)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Max sink rate (m/s)", "Triggers extra climb command when exceeded.")}</label><input type="number" step="0.5" data-vk="controller.max_sink_rate_mps" value="${safeNum(controller.max_sink_rate_mps, 5)}" /></div>
+            <div class="field"><label>${labelWithTip("Max climb (deg)", "Steep-climb protection limit (legacy angle cap).")}</label><input type="number" step="0.5" data-vk="controller.max_climb_deg" value="${safeNum(controller.max_climb_deg, 8)}" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>${labelWithTip("Max descent (deg)", "Steep-descent protection limit.")}</label><input type="number" step="0.5" data-vk="controller.max_descent_deg" value="${safeNum(controller.max_descent_deg, 8)}" /></div>
+            <div class="field"><label>${labelWithTip("JSBSim root/path", "Optional root directory for JSBSim aircraft, engine, and systems data. Leave blank for package defaults.")}</label><input type="text" data-vtext="parameters.jsbsim_root" value="${escapeAttr(params.jsbsim_root || "")}" placeholder="auto" /></div>
+          </div>
         </div>
       </div>
       <div class="insp-section vehicle-detail">
@@ -345,10 +393,17 @@ export function mountCreate(ctx) {
               <div class="field"><label>${labelWithTip("Systems data path", "Optional systems XML directory.")}</label><input type="text" data-vtext="parameters.systems_path" value="${escapeAttr(params.systems_path || "")}" placeholder="auto" /></div>
               <div class="field"><label>${labelWithTip("Flap command", "Normalized flap deflection (0–1).")}</label><input type="number" step="0.01" min="0" max="1" data-vk="parameters.flap_cmd_norm" value="${safeNum(params.flap_cmd_norm, 0)}" /></div>
             </div>
-            <div class="field toggle">
-              <span class="toggle-label">${labelWithTip("Engine running at start", "Starts the JSBSim piston engine before the run loop.")}</span>
-              <label class="switch"><input type="checkbox" data-vehicle-bool="parameters.engine_running" ${engineOn ? "checked" : ""} /><span class="slider"></span></label>
+            <div class="field-row">
+              <div class="field toggle">
+                <span class="toggle-label">${labelWithTip("Engine running at start", "Starts the JSBSim piston engine before the run loop.")}</span>
+                <label class="switch"><input type="checkbox" data-vehicle-bool="parameters.engine_running" ${engineOn ? "checked" : ""} /><span class="slider"></span></label>
+              </div>
+              <div class="field toggle">
+                <span class="toggle-label">${labelWithTip("Auto elevator trim at IC", "Search elevator trim after engine start for near-level flight.")}</span>
+                <label class="switch"><input type="checkbox" data-vehicle-bool="parameters.auto_trim_elevator" ${autoTrim ? "checked" : ""} /><span class="slider"></span></label>
+              </div>
             </div>
+            <div class="field"><label>${labelWithTip("IC trim search steps", "Iterations for auto elevator trim (advanced).")}</label><input type="number" step="1" data-vk="parameters.ic_trim_steps" value="${safeNum(params.ic_trim_steps, 24)}" /></div>
           </div>
         </details>
       </div>
@@ -483,6 +538,43 @@ export function mountCreate(ctx) {
     inspector.querySelectorAll("[data-vehicle-bool]").forEach((el) =>
       el.addEventListener("change", () => {
         setByPath(store.scenario.vehicle, el.dataset.vehicleBool, !!el.checked);
+      })
+    );
+    inspector.querySelectorAll("[data-jsbsim-aircraft]").forEach((el) =>
+      el.addEventListener("change", async () => {
+        const aircraftId = String(el.value || "").trim();
+        if (!aircraftId) {
+          if (store.scenario.metadata) delete store.scenario.metadata.jsbsim_aircraft;
+          render();
+          return;
+        }
+        try {
+          const merged = await api.applyJsbsimAircraft(store.scenario, aircraftId);
+          mergeScenarioFromPreset(store.scenario, merged);
+          ensureVehicleObj(store.scenario);
+          setStatus(`Applied JSBSim aircraft: ${aircraftId}`, "ok");
+          render();
+        } catch (e) {
+          setStatus(`Aircraft preset failed: ${e.message}`, "err");
+        }
+      })
+    );
+    inspector.querySelectorAll("[data-jsbsim-preset]").forEach((el) =>
+      el.addEventListener("change", async () => {
+        const presetId = String(el.value || "").trim();
+        if (!presetId) {
+          if (store.scenario.metadata) delete store.scenario.metadata.jsbsim_preset;
+          return;
+        }
+        try {
+          const merged = await api.applyJsbsimPreset(store.scenario, presetId);
+          mergeScenarioFromPreset(store.scenario, merged);
+          ensureVehicleObj(store.scenario);
+          setStatus(`Applied JSBSim preset: ${presetId}`, "ok");
+          render();
+        } catch (e) {
+          setStatus(`Preset failed: ${e.message}`, "err");
+        }
       })
     );
     inspector.querySelectorAll("[data-ek]").forEach((el) =>
@@ -1135,6 +1227,60 @@ function isFixedWingVehicle(scenario, runConfig = null) {
   return backendId === JSBSIM_CESSNA_BACKEND || scenario?.vehicle?.model_type === "fixed_wing";
 }
 
+function mergeScenarioFromPreset(target, merged) {
+  if (!target || !merged) return;
+  if (merged.vehicle) {
+    target.vehicle = deepMergeObjects(target.vehicle || {}, merged.vehicle);
+  }
+  if (merged.run_config) {
+    target.run_config = deepMergeObjects(target.run_config || {}, merged.run_config);
+  }
+  if (merged.metadata) {
+    target.metadata = { ...(target.metadata || {}), ...merged.metadata };
+  }
+}
+
+function deepMergeObjects(base, overlay) {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(overlay || {})) {
+    if (value && typeof value === "object" && !Array.isArray(value) && typeof out[key] === "object" && out[key]) {
+      out[key] = deepMergeObjects(out[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+async function loadJsbsimPresets() {
+  try {
+    const body = await api.jsbsimPresets();
+    store.jsbsimPresets = body.presets || [];
+  } catch (_e) {
+    store.jsbsimPresets = [];
+  }
+}
+
+async function loadJsbsimAircraft() {
+  try {
+    const body = await api.jsbsimAircraft();
+    store.jsbsimAircraft = body.aircraft || [];
+  } catch (_e) {
+    store.jsbsimAircraft = [];
+  }
+}
+
+function resolveActiveJsbsimAircraft(params, metadata) {
+  const catalogId = String(metadata?.jsbsim_aircraft || "").trim();
+  if (catalogId) return { catalogId, isCustom: false };
+  const modelName = String(params?.aircraft || params?.aircraft_xml || "").trim();
+  const match = (store.jsbsimAircraft || []).find(
+    (a) => a.jsbsim_model === modelName || a.id === modelName
+  );
+  if (match) return { catalogId: match.id, isCustom: false };
+  return { catalogId: "", isCustom: true };
+}
+
 function applyVehiclePresetForBackend(scenario, backendId) {
   if (!scenario) return;
   if (!scenario.vehicle || typeof scenario.vehicle !== "object") scenario.vehicle = {};
@@ -1144,9 +1290,9 @@ function applyVehiclePresetForBackend(scenario, backendId) {
 
   vehicle.backend_id = backendId;
   if (backendId === JSBSIM_CESSNA_BACKEND) {
-    vehicle.model_id = "jsbsim_c172";
     vehicle.model_type = "fixed_wing";
-    vehicle.display_name = "JSBSim Cessna 172";
+    if (!vehicle.model_id || vehicle.model_id === "jsbsim_c172") vehicle.model_id = "jsbsim_c172p";
+    if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172") vehicle.display_name = "Cessna 172P";
     if (!vehicle.parameters.aircraft && !vehicle.parameters.aircraft_xml) vehicle.parameters.aircraft = "c172p";
     if (!vehicle.parameters.altitude_reference) vehicle.parameters.altitude_reference = "agl";
     if (!Number.isFinite(Number(vehicle.parameters.initial_ias_mps))) vehicle.parameters.initial_ias_mps = 40.0;
@@ -1166,9 +1312,39 @@ function applyVehiclePresetForBackend(scenario, backendId) {
     if (!Number.isFinite(Number(vehicle.controller.min_agl_m))) vehicle.controller.min_agl_m = 10.0;
     if (!Number.isFinite(Number(vehicle.controller.max_sink_rate_mps))) vehicle.controller.max_sink_rate_mps = 5.0;
     if (!Number.isFinite(Number(vehicle.controller.max_climb_deg))) vehicle.controller.max_climb_deg = 8.0;
+    if (!Number.isFinite(Number(vehicle.controller.max_descent_deg))) vehicle.controller.max_descent_deg = 8.0;
     if (!Number.isFinite(Number(vehicle.controller.elevator_trim))) vehicle.controller.elevator_trim = 0.0;
+    if (!Number.isFinite(Number(vehicle.controller.climb_rate_limit_mps))) {
+      vehicle.controller.climb_rate_limit_mps = 4.0;
+    }
+    if (!Number.isFinite(Number(vehicle.controller.elevator_gain))) vehicle.controller.elevator_gain = 0.12;
+    vehicle.controller.elevator_sign = -1.0;
+    if (!Number.isFinite(Number(vehicle.controller.gamma_rate_limit_deg_s))) {
+      vehicle.controller.gamma_rate_limit_deg_s = 4.0;
+    }
+    if (!Number.isFinite(Number(vehicle.parameters.ic_trim_steps))) vehicle.parameters.ic_trim_steps = 24;
     if (!scenario.run_config || typeof scenario.run_config !== "object") scenario.run_config = {};
     const rc = scenario.run_config;
+    const fixedWingMinAltM = 100.0;
+    if (!Number.isFinite(Number(rc.target_altitude_m)) || Number(rc.target_altitude_m) < 30.0) {
+      rc.target_altitude_m = fixedWingMinAltM;
+    }
+    if (scenario.waypoints && typeof scenario.waypoints === "object") {
+      if (!Number.isFinite(Number(scenario.waypoints.default_alt_m)) || Number(scenario.waypoints.default_alt_m) < 30.0) {
+        scenario.waypoints.default_alt_m = fixedWingMinAltM;
+      }
+      const wps = scenario.waypoints.waypoints;
+      if (Array.isArray(wps)) {
+        for (const wp of wps) {
+          if (!wp || typeof wp !== "object") continue;
+          const zVal = wp.z_m != null ? Number(wp.z_m) : Number(wp.alt_m);
+          if (!Number.isFinite(zVal) || zVal < 30.0) {
+            wp.z_m = fixedWingMinAltM;
+            wp.alt_m = fixedWingMinAltM;
+          }
+        }
+      }
+    }
     if (!Number.isFinite(Number(rc.dt_s)) || Number(rc.dt_s) > 0.1) rc.dt_s = 0.05;
     if (!Number.isFinite(Number(rc.waypoint_threshold_m)) || Number(rc.waypoint_threshold_m) < 1) {
       rc.waypoint_threshold_m = 50.0;
@@ -1179,10 +1355,10 @@ function applyVehiclePresetForBackend(scenario, backendId) {
   if (vehicle.model_type === "fixed_wing" || !vehicle.model_type) {
     vehicle.model_type = "quadcopter";
   }
-  if (!vehicle.model_id || vehicle.model_id === "jsbsim_c172") {
+  if (!vehicle.model_id || String(vehicle.model_id).startsWith("jsbsim_")) {
     vehicle.model_id = backendId === "pybullet_quad" ? "pybullet_quad" : "inhouse_mpc_quad";
   }
-  if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172") {
+  if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172" || vehicle.display_name === "Cessna 172P") {
     vehicle.display_name = backendId === "pybullet_quad" ? "PyBullet / PyFlyt Quadcopter" : "In-house MPC Quadcopter";
   }
   if (!vehicle.controller.type || vehicle.controller.type === "waypoint_autopilot") vehicle.controller.type = "mpc";
