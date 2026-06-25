@@ -39,6 +39,9 @@ export const api = {
   jsbsimAircraft: () => get("/api/jsbsim/aircraft"),
   applyJsbsimAircraft: (scenario, aircraftId) =>
     post("/api/jsbsim/apply-aircraft", { scenario, aircraft_id: aircraftId }),
+  pointmassModels: () => get("/api/pointmass/models"),
+  applyPointmassModel: (scenario, modelId) =>
+    post("/api/pointmass/apply-model", { scenario, model_id: modelId }),
   listScenarios: () => get("/api/scenarios"),
   defaultScenario: () => get("/api/scenarios/default"),
   getScenario: (id) => get(`/api/scenarios/${id}`),

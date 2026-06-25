@@ -29,6 +29,7 @@ from PIL import Image
 
 from dronesim.config.jsbsim_aircraft import apply_jsbsim_aircraft, list_jsbsim_aircraft
 from dronesim.config.jsbsim_presets import apply_jsbsim_preset, list_jsbsim_presets
+from dronesim.config.pointmass_models import apply_pointmass_model, list_pointmass_models
 from dronesim.models import MapSpec, RunConfig, ScenarioSpec
 from dronesim.services.terrain import (
     MapAsset,
@@ -132,6 +133,23 @@ def jsbsim_apply_aircraft(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     scenario = payload.get("scenario") or {}
     try:
         return apply_jsbsim_aircraft(scenario, str(aircraft_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/pointmass/models")
+def pointmass_models() -> dict[str, Any]:
+    return {"models": list_pointmass_models()}
+
+
+@app.post("/api/pointmass/apply-model")
+def pointmass_apply_model(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    model_id = payload.get("model_id")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    scenario = payload.get("scenario") or {}
+    try:
+        return apply_pointmass_model(scenario, str(model_id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

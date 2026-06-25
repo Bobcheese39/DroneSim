@@ -426,12 +426,18 @@ class DroneFactory:
             # and backends_jsbsim (which import SimulationBackend /
             # BackendUnavailable from here).
             from dronesim.sim.backends_jsbsim import JSBSimCessnaBackend
+            from dronesim.sim.backends_pointmass import (
+                PointMass3DOFFixedWingBackend,
+                PointMass3DOFQuadBackend,
+            )
             from dronesim.sim.backends_pybullet import PyBulletQuadBackend
 
             backends = [
                 InHouseMpcQuadBackend(),
                 PyBulletQuadBackend(),
                 JSBSimCessnaBackend(),
+                PointMass3DOFQuadBackend(),
+                PointMass3DOFFixedWingBackend(),
             ]
         for backend in backends:
             self.register(backend)

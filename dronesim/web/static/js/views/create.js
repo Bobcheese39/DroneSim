@@ -13,6 +13,8 @@ const CSS_COLORS = {
 };
 
 const JSBSIM_CESSNA_BACKEND = "jsbsim_cessna";
+const POINTMASS_QUAD_BACKEND = "pointmass_quad";
+const POINTMASS_FW_BACKEND = "pointmass_fixed_wing";
 
 function cssColor(c) {
   if (!c) return "#ff453a";
@@ -41,6 +43,7 @@ export function mountCreate(ctx) {
   const hud = document.getElementById("map-hud");
   void loadJsbsimPresets();
   void loadJsbsimAircraft();
+  void loadPointmassModels();
 
   function backendOptions(selected) {
     return store.backends
@@ -159,6 +162,7 @@ export function mountCreate(ctx) {
     const env = s.environment;
     const wind = Array.isArray(env.wind_mps) ? env.wind_mps : [0, 0, 0];
     const fixedWing = isFixedWingVehicle(s, rc);
+    const pointMass = isPointMassVehicle(s, rc);
     return `
       <div class="insp-section">
         <h3 class="insp-title">Run profile</h3>
@@ -167,6 +171,8 @@ export function mountCreate(ctx) {
             ${
               fixedWing
                 ? "JSBSim Cessna uses fixed-wing waypoint guidance and normalized flight-control commands."
+                : pointMass
+                ? "3DOF point-mass model: kinematic guidance — no rotational dynamics, oscillation-free for any positive gains."
                 : "Advanced fidelity options currently apply to In-house MPC backend."
             }
           </div>
@@ -185,7 +191,7 @@ export function mountCreate(ctx) {
             )}</label><input type="number" step="0.01" data-rk="waypoint_threshold_m" value="${safeNum(rc.waypoint_threshold_m, fixedWing ? 50 : 0.25)}" /></div>
           </div>
           ${
-            fixedWing
+            fixedWing || pointMass
               ? ""
               : `<div class="field-row">
                   <div class="field"><label>${labelWithTip("Horizon", "MPC prediction horizon in control steps.")}</label><input type="number" step="1" data-rk="horizon" value="${safeNum(rc.horizon, 20)}" /></div>
@@ -196,9 +202,9 @@ export function mountCreate(ctx) {
         </div>
       </div>
 
-      ${fixedWing ? fixedWingSection(vehicle) : quadFidelitySection(rc)}
+      ${fixedWing ? fixedWingSection(vehicle) : pointMass ? pointMassSection(vehicle, rc) : quadFidelitySection(rc)}
 
-      ${fixedWing ? "" : quadVehicleSections(params, aero)}
+      ${(fixedWing || pointMass) ? "" : quadVehicleSections(params, aero)}
 
       <div class="insp-section vehicle-detail">
         <details open>
@@ -275,6 +281,70 @@ export function mountCreate(ctx) {
               </select>
             </div>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function pointMassSection(vehicle, rc) {
+    const params = vehicle.parameters || {};
+    const isQuad = vehicle.backend_id === POINTMASS_QUAD_BACKEND || vehicle.model_type === "pointmass_quad";
+    const activeModel = (store.scenario?.metadata?.pointmass_model || "").trim();
+    const modelOptions = (store.pointmassModels || [])
+      .filter((m) => isQuad ? m.model_type === "pointmass_quad" : m.model_type === "pointmass_fixed_wing")
+      .map(
+        (m) =>
+          `<option value="${escapeAttr(m.id)}" ${m.id === activeModel ? "selected" : ""}>${escapeHtml(m.label)}</option>`
+      )
+      .join("");
+    const quadFields = isQuad ? `
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Mass (kg)", "Vehicle mass used to compute thrust output for display.")}</label><input type="number" step="0.1" min="0.1" data-vk="parameters.mass" value="${safeNum(params.mass, 5)}" /></div>
+        <div class="field"><label>${labelWithTip("Max accel (m/s²)", "Hard cap on commanded acceleration magnitude.")}</label><input type="number" step="0.1" min="0.1" data-vk="parameters.max_accel_mps2" value="${safeNum(params.max_accel_mps2, 5)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Max speed (m/s)", "Speed cap applied after each integration step.")}</label><input type="number" step="0.5" min="0.1" data-vk="parameters.max_speed_mps" value="${safeNum(params.max_speed_mps, 10)}" /></div>
+        <div class="field"><label>${labelWithTip("Capture radius (m)", "Horizontal distance to count a waypoint as reached.")}</label><input type="number" step="0.1" min="0" data-vk="parameters.waypoint_capture_radius_m" value="${safeNum(params.waypoint_capture_radius_m, 0.5)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("kp_pos", "Position proportional gain. Increase for faster response.")}</label><input type="number" step="0.05" min="0" data-vk="parameters.kp_pos" value="${safeNum(params.kp_pos, 1.2)}" /></div>
+        <div class="field"><label>${labelWithTip("kd_pos", "Velocity damping gain. Increase to reduce overshoot.")}</label><input type="number" step="0.05" min="0" data-vk="parameters.kd_pos" value="${safeNum(params.kd_pos, 1.4)}" /></div>
+      </div>` : `
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Cruise speed (m/s)", "Target airspeed throughout the mission.")}</label><input type="number" step="0.5" min="1" data-vk="parameters.cruise_speed_mps" value="${safeNum(params.cruise_speed_mps, 40)}" /></div>
+        <div class="field"><label>${labelWithTip("Capture radius (m)", "Horizontal distance to advance to next waypoint.")}</label><input type="number" step="1" min="0" data-vk="parameters.waypoint_capture_radius_m" value="${safeNum(params.waypoint_capture_radius_m, 75)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Min speed (m/s)", "Lower speed bound.")}</label><input type="number" step="0.5" min="1" data-vk="parameters.min_speed_mps" value="${safeNum(params.min_speed_mps, 25)}" /></div>
+        <div class="field"><label>${labelWithTip("Max speed (m/s)", "Upper speed bound.")}</label><input type="number" step="0.5" min="1" data-vk="parameters.max_speed_mps" value="${safeNum(params.max_speed_mps, 70)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Max bank (deg)", "Maximum bank angle for turns.")}</label><input type="number" step="1" min="0" max="89" data-vk="parameters.max_bank_deg" value="${safeNum(params.max_bank_deg, 30)}" /></div>
+        <div class="field"><label>${labelWithTip("Turn rate limit (deg/s)", "Cap on heading rate of change.")}</label><input type="number" step="0.5" min="0" data-vk="parameters.turn_rate_limit_deg_s" value="${safeNum(params.turn_rate_limit_deg_s, 10)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Max climb (deg)", "Maximum flight-path climb angle.")}</label><input type="number" step="0.5" min="0" max="45" data-vk="parameters.max_climb_deg" value="${safeNum(params.max_climb_deg, 8)}" /></div>
+        <div class="field"><label>${labelWithTip("Max descent (deg)", "Maximum flight-path descent angle.")}</label><input type="number" step="0.5" min="0" max="45" data-vk="parameters.max_descent_deg" value="${safeNum(params.max_descent_deg, 8)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Heading gain", "Proportional gain from heading error to turn command.")}</label><input type="number" step="0.1" min="0" data-vk="parameters.heading_gain" value="${safeNum(params.heading_gain, 1.5)}" /></div>
+        <div class="field"><label>${labelWithTip("Altitude gain", "Proportional gain from altitude error to flight-path command.")}</label><input type="number" step="0.005" min="0" data-vk="parameters.altitude_gain" value="${safeNum(params.altitude_gain, 0.03)}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${labelWithTip("Climb rate limit (m/s)", "Max vertical rate of change.")}</label><input type="number" step="0.1" min="0" data-vk="parameters.climb_rate_limit_mps" value="${safeNum(params.climb_rate_limit_mps, 4)}" /></div>
+      </div>`;
+    return `
+      <div class="insp-section">
+        <h3 class="insp-title">${isQuad ? "3DOF Quadcopter" : "3DOF Fixed-Wing"} Parameters</h3>
+        <div class="card">
+          <div class="field">
+            <label>${labelWithTip("Model preset", "Apply a preset parameter set. You can further adjust values below.")}</label>
+            <select data-pointmass-model>
+              <option value="" ${activeModel ? "" : "selected"}>Custom</option>
+              ${modelOptions}
+            </select>
+          </div>
+          ${quadFields}
         </div>
       </div>
     `;
@@ -574,6 +644,25 @@ export function mountCreate(ctx) {
           render();
         } catch (e) {
           setStatus(`Preset failed: ${e.message}`, "err");
+        }
+      })
+    );
+    inspector.querySelectorAll("[data-pointmass-model]").forEach((el) =>
+      el.addEventListener("change", async () => {
+        const modelId = String(el.value || "").trim();
+        if (!modelId) {
+          if (store.scenario.metadata) delete store.scenario.metadata.pointmass_model;
+          render();
+          return;
+        }
+        try {
+          const merged = await api.applyPointmassModel(store.scenario, modelId);
+          mergeScenarioFromPreset(store.scenario, merged);
+          ensureRunConfigObj(store.scenario);
+          setStatus(`Applied 3DOF preset: ${modelId}`, "ok");
+          render();
+        } catch (e) {
+          setStatus(`Point-mass preset failed: ${e.message}`, "err");
         }
       })
     );
@@ -1227,6 +1316,16 @@ function isFixedWingVehicle(scenario, runConfig = null) {
   return backendId === JSBSIM_CESSNA_BACKEND || scenario?.vehicle?.model_type === "fixed_wing";
 }
 
+function isPointMassVehicle(scenario, runConfig = null) {
+  const backendId = runConfig?.backend_id || scenario?.run_config?.backend_id || scenario?.vehicle?.backend_id;
+  return (
+    backendId === POINTMASS_QUAD_BACKEND ||
+    backendId === POINTMASS_FW_BACKEND ||
+    scenario?.vehicle?.model_type === "pointmass_quad" ||
+    scenario?.vehicle?.model_type === "pointmass_fixed_wing"
+  );
+}
+
 function mergeScenarioFromPreset(target, merged) {
   if (!target || !merged) return;
   if (merged.vehicle) {
@@ -1267,6 +1366,15 @@ async function loadJsbsimAircraft() {
     store.jsbsimAircraft = body.aircraft || [];
   } catch (_e) {
     store.jsbsimAircraft = [];
+  }
+}
+
+async function loadPointmassModels() {
+  try {
+    const body = await api.pointmassModels();
+    store.pointmassModels = body.models || [];
+  } catch (_e) {
+    store.pointmassModels = [];
   }
 }
 
@@ -1352,16 +1460,92 @@ function applyVehiclePresetForBackend(scenario, backendId) {
     return;
   }
 
-  if (vehicle.model_type === "fixed_wing" || !vehicle.model_type) {
+  if (backendId === POINTMASS_QUAD_BACKEND) {
+    vehicle.model_type = "pointmass_quad";
+    if (!vehicle.model_id || !String(vehicle.model_id).startsWith("pointmass_quad")) {
+      vehicle.model_id = "pointmass_quad_default";
+    }
+    if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172" || vehicle.display_name === "Cessna 172P") {
+      vehicle.display_name = "3DOF Quadcopter";
+    }
+    vehicle.controller.type = "pointmass_pd";
+    if (!Number.isFinite(Number(vehicle.parameters.mass))) vehicle.parameters.mass = 5.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_accel_mps2))) vehicle.parameters.max_accel_mps2 = 5.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_speed_mps))) vehicle.parameters.max_speed_mps = 10.0;
+    if (!Number.isFinite(Number(vehicle.parameters.kp_pos))) vehicle.parameters.kp_pos = 1.2;
+    if (!Number.isFinite(Number(vehicle.parameters.kd_pos))) vehicle.parameters.kd_pos = 1.4;
+    if (!Number.isFinite(Number(vehicle.parameters.waypoint_capture_radius_m))) {
+      vehicle.parameters.waypoint_capture_radius_m = 0.5;
+    }
+    if (!scenario.run_config || typeof scenario.run_config !== "object") scenario.run_config = {};
+    const qrc = scenario.run_config;
+    if (!Number.isFinite(Number(qrc.dt_s)) || Number(qrc.dt_s) > 0.5) qrc.dt_s = 0.1;
+    if (!Number.isFinite(Number(qrc.max_steps)) || Number(qrc.max_steps) < 10) qrc.max_steps = 500;
+    return;
+  }
+
+  if (backendId === POINTMASS_FW_BACKEND) {
+    vehicle.model_type = "pointmass_fixed_wing";
+    if (!vehicle.model_id || !String(vehicle.model_id).startsWith("pointmass_fw")) {
+      vehicle.model_id = "pointmass_fw_default";
+    }
+    if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172" || vehicle.display_name === "Cessna 172P") {
+      vehicle.display_name = "3DOF Fixed-Wing";
+    }
+    vehicle.controller.type = "pointmass_waypoint";
+    if (!Number.isFinite(Number(vehicle.parameters.cruise_speed_mps))) vehicle.parameters.cruise_speed_mps = 40.0;
+    if (!Number.isFinite(Number(vehicle.parameters.min_speed_mps))) vehicle.parameters.min_speed_mps = 25.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_speed_mps))) vehicle.parameters.max_speed_mps = 70.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_bank_deg))) vehicle.parameters.max_bank_deg = 30.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_climb_deg))) vehicle.parameters.max_climb_deg = 8.0;
+    if (!Number.isFinite(Number(vehicle.parameters.max_descent_deg))) vehicle.parameters.max_descent_deg = 8.0;
+    if (!Number.isFinite(Number(vehicle.parameters.turn_rate_limit_deg_s))) vehicle.parameters.turn_rate_limit_deg_s = 10.0;
+    if (!Number.isFinite(Number(vehicle.parameters.climb_rate_limit_mps))) vehicle.parameters.climb_rate_limit_mps = 4.0;
+    if (!Number.isFinite(Number(vehicle.parameters.heading_gain))) vehicle.parameters.heading_gain = 1.5;
+    if (!Number.isFinite(Number(vehicle.parameters.altitude_gain))) vehicle.parameters.altitude_gain = 0.03;
+    if (!Number.isFinite(Number(vehicle.parameters.waypoint_capture_radius_m))) {
+      vehicle.parameters.waypoint_capture_radius_m = 75.0;
+    }
+    if (!scenario.run_config || typeof scenario.run_config !== "object") scenario.run_config = {};
+    const fwrc = scenario.run_config;
+    const fwMinAltM = 100.0;
+    if (!Number.isFinite(Number(fwrc.target_altitude_m)) || Number(fwrc.target_altitude_m) < 30.0) {
+      fwrc.target_altitude_m = fwMinAltM;
+    }
+    if (!Number.isFinite(Number(fwrc.dt_s)) || Number(fwrc.dt_s) > 0.1) fwrc.dt_s = 0.05;
+    if (!Number.isFinite(Number(fwrc.max_steps)) || Number(fwrc.max_steps) < 100) fwrc.max_steps = 2000;
+    if (!Number.isFinite(Number(fwrc.waypoint_threshold_m)) || Number(fwrc.waypoint_threshold_m) < 1) {
+      fwrc.waypoint_threshold_m = 75.0;
+    }
+    if (scenario.waypoints && typeof scenario.waypoints === "object") {
+      if (!Number.isFinite(Number(scenario.waypoints.default_alt_m)) || Number(scenario.waypoints.default_alt_m) < 30.0) {
+        scenario.waypoints.default_alt_m = fwMinAltM;
+      }
+      const wps = scenario.waypoints.waypoints;
+      if (Array.isArray(wps)) {
+        for (const wp of wps) {
+          if (!wp || typeof wp !== "object") continue;
+          const zVal = wp.z_m != null ? Number(wp.z_m) : Number(wp.alt_m);
+          if (!Number.isFinite(zVal) || zVal < 30.0) {
+            wp.z_m = fwMinAltM;
+            wp.alt_m = fwMinAltM;
+          }
+        }
+      }
+    }
+    return;
+  }
+
+  if (vehicle.model_type === "fixed_wing" || vehicle.model_type === "pointmass_quad" || vehicle.model_type === "pointmass_fixed_wing" || !vehicle.model_type) {
     vehicle.model_type = "quadcopter";
   }
-  if (!vehicle.model_id || String(vehicle.model_id).startsWith("jsbsim_")) {
+  if (!vehicle.model_id || String(vehicle.model_id).startsWith("jsbsim_") || String(vehicle.model_id).startsWith("pointmass_")) {
     vehicle.model_id = backendId === "pybullet_quad" ? "pybullet_quad" : "inhouse_mpc_quad";
   }
   if (!vehicle.display_name || vehicle.display_name === "JSBSim Cessna 172" || vehicle.display_name === "Cessna 172P") {
     vehicle.display_name = backendId === "pybullet_quad" ? "PyBullet / PyFlyt Quadcopter" : "In-house MPC Quadcopter";
   }
-  if (!vehicle.controller.type || vehicle.controller.type === "waypoint_autopilot") vehicle.controller.type = "mpc";
+  if (!vehicle.controller.type || vehicle.controller.type === "waypoint_autopilot" || vehicle.controller.type === "pointmass_pd" || vehicle.controller.type === "pointmass_waypoint") vehicle.controller.type = "mpc";
   if (!Number.isFinite(Number(vehicle.controller.horizon))) vehicle.controller.horizon = 20;
   if (!Number.isFinite(Number(vehicle.controller.lookahead))) vehicle.controller.lookahead = 60;
 }
@@ -1374,7 +1558,7 @@ function ensureVehicleObj(scenario) {
   const vehicle = scenario.vehicle;
   if (!vehicle.parameters || typeof vehicle.parameters !== "object") vehicle.parameters = {};
   if (!vehicle.controller || typeof vehicle.controller !== "object") vehicle.controller = {};
-  if (isFixedWingVehicle(scenario)) return;
+  if (isFixedWingVehicle(scenario) || isPointMassVehicle(scenario)) return;
   const params = vehicle.parameters;
   if (!Number.isFinite(Number(params.mass))) params.mass = 5.0;
   if (!Number.isFinite(Number(params.Ix))) params.Ix = 1.0;

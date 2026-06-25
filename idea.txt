@@ -33,7 +33,7 @@ Create
 - or add markers through sidebar
 - render markers in sidebar
 
-
+path tracing mode, live rendering where vehicle tracks a point controlled by mouse/ arrow keys
 
 
 terrain_3d.py:

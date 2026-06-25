@@ -1,0 +1,102 @@
+{
+  "models": {
+    "pointmass_quad_default": {
+      "label": "3DOF Quadcopter (default)",
+      "description": "Stable point-mass quadcopter for preliminary mission analysis. Tune kp_pos / kd_pos to adjust responsiveness.",
+      "model_type": "pointmass_quad",
+      "vehicle": {
+        "model_id": "pointmass_quad_default",
+        "model_type": "pointmass_quad",
+        "backend_id": "pointmass_quad",
+        "display_name": "3DOF Quadcopter",
+        "parameters": {
+          "mass": 5.0,
+          "max_accel_mps2": 5.0,
+          "max_speed_mps": 10.0,
+          "kp_pos": 1.2,
+          "kd_pos": 1.4,
+          "waypoint_capture_radius_m": 0.5
+        },
+        "controller": {
+          "type": "pointmass_pd"
+        }
+      }
+    },
+    "pointmass_quad_agile": {
+      "label": "3DOF Quadcopter (agile)",
+      "description": "Higher acceleration limit for tight waypoint tracking at the cost of abrupt manoeuvres.",
+      "model_type": "pointmass_quad",
+      "vehicle": {
+        "model_id": "pointmass_quad_agile",
+        "model_type": "pointmass_quad",
+        "backend_id": "pointmass_quad",
+        "display_name": "3DOF Quadcopter (agile)",
+        "parameters": {
+          "mass": 2.0,
+          "max_accel_mps2": 10.0,
+          "max_speed_mps": 15.0,
+          "kp_pos": 2.0,
+          "kd_pos": 2.0,
+          "waypoint_capture_radius_m": 0.3
+        },
+        "controller": {
+          "type": "pointmass_pd"
+        }
+      }
+    },
+    "pointmass_fw_default": {
+      "label": "3DOF Fixed-Wing (default)",
+      "description": "Stable coordinated point-mass fixed-wing for route feasibility analysis. Analogous to a light GA aircraft.",
+      "model_type": "pointmass_fixed_wing",
+      "vehicle": {
+        "model_id": "pointmass_fw_default",
+        "model_type": "pointmass_fixed_wing",
+        "backend_id": "pointmass_fixed_wing",
+        "display_name": "3DOF Fixed-Wing",
+        "parameters": {
+          "cruise_speed_mps": 40.0,
+          "min_speed_mps": 25.0,
+          "max_speed_mps": 70.0,
+          "max_bank_deg": 30.0,
+          "max_climb_deg": 8.0,
+          "max_descent_deg": 8.0,
+          "turn_rate_limit_deg_s": 10.0,
+          "climb_rate_limit_mps": 4.0,
+          "heading_gain": 1.5,
+          "altitude_gain": 0.03,
+          "waypoint_capture_radius_m": 75.0
+        },
+        "controller": {
+          "type": "pointmass_waypoint"
+        }
+      }
+    },
+    "pointmass_fw_uav": {
+      "label": "3DOF Fixed-Wing UAV",
+      "description": "Slower, more manoeuvrable configuration suited for small fixed-wing UAV missions.",
+      "model_type": "pointmass_fixed_wing",
+      "vehicle": {
+        "model_id": "pointmass_fw_uav",
+        "model_type": "pointmass_fixed_wing",
+        "backend_id": "pointmass_fixed_wing",
+        "display_name": "3DOF Fixed-Wing UAV",
+        "parameters": {
+          "cruise_speed_mps": 20.0,
+          "min_speed_mps": 12.0,
+          "max_speed_mps": 35.0,
+          "max_bank_deg": 45.0,
+          "max_climb_deg": 12.0,
+          "max_descent_deg": 12.0,
+          "turn_rate_limit_deg_s": 20.0,
+          "climb_rate_limit_mps": 6.0,
+          "heading_gain": 2.0,
+          "altitude_gain": 0.05,
+          "waypoint_capture_radius_m": 30.0
+        },
+        "controller": {
+          "type": "pointmass_waypoint"
+        }
+      }
+    }
+  }
+}
