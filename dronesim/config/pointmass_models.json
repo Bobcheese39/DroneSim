@@ -97,6 +97,33 @@
           "type": "pointmass_waypoint"
         }
       }
-    }
+    },
+    "pointmass_f16": {
+        "label": "3DOF F16",
+        "description": "F16",
+        "model_type": "pointmass_fixed_wing",
+        "vehicle": {
+          "model_id": "pointmass_f16",
+          "model_type": "pointmass_fixed_wing",
+          "backend_id": "pointmass_fixed_wing",
+          "display_name": "3DOF pointmass F16",
+          "parameters": {
+            "cruise_speed_mps": 200.0,
+            "min_speed_mps": 100.0,
+            "max_speed_mps": 670.0,
+            "max_bank_deg": 45.0,
+            "max_climb_deg": 12.0,
+            "max_descent_deg": 12.0,
+            "turn_rate_limit_deg_s": 20.0,
+            "climb_rate_limit_mps": 6.0,
+            "heading_gain": 2.0,
+            "altitude_gain": 0.05,
+            "waypoint_capture_radius_m": 300.0
+          },
+          "controller": {
+            "type": "pointmass_waypoint"
+          }
+        }
+      }
   }
 }
